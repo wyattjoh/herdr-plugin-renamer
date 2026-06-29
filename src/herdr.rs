@@ -22,7 +22,12 @@ fn pane_agent_session(pane_id: &str) -> Option<(String, String)> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let session = value.get("agent_session")?;
+    // The CLI wraps the pane in a `{"result":{"pane":{...}}}` envelope. Accept
+    // the wrapped shape first, then fall back to unwrapped variants.
+    let session = value
+        .pointer("/result/pane/agent_session")
+        .or_else(|| value.pointer("/pane/agent_session"))
+        .or_else(|| value.get("agent_session"))?;
 
     let agent = match session.get("agent").and_then(|a| a.as_str()) {
         Some(a) => a.to_string(),

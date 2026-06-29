@@ -57,12 +57,20 @@ fn hot_phase() {
     let state_dir = state_dir();
     let marker = marker_path(&state_dir, &eligible.workspace_id);
     if claim_is_fresh(&marker) {
+        debug_log(&format!(
+            "hot: claim fresh, bail ws={}",
+            eligible.workspace_id
+        ));
         return;
     }
 
     let _ = std::fs::create_dir_all(&state_dir);
     let _ = std::fs::write(&marker, now_secs().to_string());
 
+    debug_log(&format!(
+        "hot: eligible ws={} pane={} label={} -> fork cold",
+        eligible.workspace_id, eligible.pane_id, eligible.workspace_label
+    ));
     spawn_cold_phase(&eligible);
 }
 
@@ -72,6 +80,7 @@ fn cold_phase() {
     let workspace_id = env::var("HN_WORKSPACE_ID").unwrap_or_default();
     let checkout_path = env::var("HN_CHECKOUT_PATH").unwrap_or_default();
     let marker = marker_path(&state_dir(), &workspace_id);
+    debug_log(&format!("cold: start ws={workspace_id} pane={pane_id}"));
 
     // Resolve the native session (with the timing-race poll), then the prompt.
     // On a transient miss, drop the claim so a later event retries.
@@ -79,32 +88,56 @@ fn cold_phase() {
         match herdr::poll_agent_session(&pane_id, SESSION_POLL_ATTEMPTS, SESSION_POLL_DELAY) {
             Some(session) => session,
             None => {
+                debug_log("cold: no agent_session after poll, removing claim");
                 let _ = std::fs::remove_file(&marker);
                 return;
             }
         };
+    debug_log(&format!("cold: session agent={agent} id={session_id}"));
 
     let prompt = match transcript::read_first_prompt(&agent, &session_id) {
         Some(prompt) => prompt,
         None => {
+            debug_log("cold: no first prompt yet, removing claim");
             let _ = std::fs::remove_file(&marker);
             return;
         }
     };
+    debug_log(&format!(
+        "cold: first prompt ({} chars): {}",
+        prompt.chars().count(),
+        prompt.chars().take(80).collect::<String>()
+    ));
 
     // Name it: Codex first, deterministic local fallback otherwise.
     let slug_file = format!("{}/{}.slug", state_dir(), workspace_id);
-    let slug = codex::generate_slug(&prompt, Path::new(&slug_file))
-        .unwrap_or_else(|| slug::fallback_from_prompt(&prompt));
+    let slug = match codex::generate_slug(&prompt, Path::new(&slug_file)) {
+        Some(slug) => {
+            debug_log(&format!("cold: codex slug={slug}"));
+            slug
+        }
+        None => {
+            let slug = slug::fallback_from_prompt(&prompt);
+            debug_log(&format!("cold: codex failed, fallback slug={slug}"));
+            slug
+        }
+    };
 
     // Safety re-check: only rename a branch still on the auto `worktree/` name,
     // so a manual rename racing us is never clobbered.
-    if let Some(current) = git::current_branch(&checkout_path) {
-        if current.starts_with("worktree/") {
-            git::rename_current_branch(&checkout_path, &format!("wyattjoh/{slug}"));
+    match git::current_branch(&checkout_path) {
+        Some(current) if current.starts_with("worktree/") => {
+            let ok = git::rename_current_branch(&checkout_path, &format!("wyattjoh/{slug}"));
+            debug_log(&format!(
+                "cold: branch {current} -> wyattjoh/{slug} ok={ok}"
+            ));
         }
+        other => debug_log(&format!("cold: skip branch rename, current={other:?}")),
     }
-    herdr::workspace_rename(&workspace_id, &slug);
+    let ok = herdr::workspace_rename(&workspace_id, &slug);
+    debug_log(&format!(
+        "cold: workspace rename ws={workspace_id} -> {slug} ok={ok}"
+    ));
 
     // Keep the marker as a "done" record (now older than CLAIM_TTL over time,
     // but the eligibility gate already bails once the label is renamed).
@@ -172,4 +205,27 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Append a diagnostic line to `<state_dir>/debug.log`. Only called on the rare
+/// eligible/cold paths, so it never costs the hot-path bail anything. The cold
+/// phase runs detached with stderr to /dev/null, so a file is the only way to
+/// see what it did.
+fn debug_log(message: &str) {
+    let dir = state_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{dir}/debug.log"))
+    {
+        let _ = writeln!(
+            file,
+            "{} [pid {}] {}",
+            now_secs(),
+            std::process::id(),
+            message
+        );
+    }
 }
