@@ -60,8 +60,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `herdr.rs` — `herdr pane get` (polled) + `herdr workspace rename`
 - `git.rs` — current branch + `git branch -m`
 - `naming-helper/` — SwiftPM package (`herdr-namer`): a `LanguageModelSession`
-  prompt → bare slug on stdout (exit 0), or a reason on stderr (non-zero) when
-  Apple Intelligence is unavailable. Same stdout-or-fail contract as `codex`.
+  guided-generation call (`respond(to:generating:)` into a `@Generable TaskName`
+  with one `slug` field) → bare slug on stdout (exit 0), or a reason on stderr
+  (non-zero) when Apple Intelligence is unavailable. Same stdout-or-fail contract
+  as `codex`.
 
 ## Conventions
 
@@ -92,6 +94,15 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   helper builds across the SDK skew between local Xcode and CI runners (locally
   it warns deprecated but compiles). The source file must not be named
   `main.swift` (conflicts with `@main`).
+- Naming uses guided generation, not free text: the model fills a `@Generable`
+  `slug` field via `respond(to:generating:)` under constrained decoding, so it
+  cannot return conversational prose (a plain `respond(to:)` once produced
+  "Sure, here are some ideas for..." → branch `sure-here-are-some-ideas-for`).
+  `maximumResponseTokens` must clear the JSON envelope (`{"slug":"..."}`) plus a
+  4-word slug, else a truncated object throws and falls back to Codex; 48 is the
+  current floor. The on-device daemon can be `.modelNotReady` for the first
+  call(s) after a cold start, so the live `cargo test foundation -- --ignored`
+  check is flaky until warm (fails open to Codex by design); re-run once warm.
 
 - herdr `[[events]]` has NO filter/once/debounce; the hook fires on every event.
 - Branch detection needs no git call: `workspace_label` (`worktree-<adj>-<noun>-<hex4>`)

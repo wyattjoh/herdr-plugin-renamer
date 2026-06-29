@@ -31,6 +31,21 @@ func readPrompt() -> String {
     return String(data: data, encoding: .utf8) ?? ""
 }
 
+// Guided-generation schema. Asking the model to fill a typed `slug` field (via
+// `respond(to:generating:)`) puts the decoder in constrained mode, so the model
+// emits the slug directly instead of free-form prose. Without this, a chatty
+// reply like "Sure, here are some ideas for..." would sanitize into a bogus
+// branch name. The Rust side still runs the value through `slug::sanitize`.
+@Generable
+struct TaskName {
+    @Guide(
+        description: "A short kebab-case slug, 2 to 4 words, all lowercase, "
+            + "hyphen-separated, summarizing the coding task. "
+            + "No quotes, no spaces, no surrounding text."
+    )
+    let slug: String
+}
+
 @main
 struct HerdrNamer {
     static func main() async {
@@ -49,22 +64,26 @@ struct HerdrNamer {
         }
 
         let instructions = """
-        You name software tasks. Reply with ONLY a short kebab-case slug \
-        (2 to 4 words, lowercase, hyphen-separated, no quotes, no surrounding \
-        text) summarizing the coding task. No explanation.
+        You name software tasks. Summarize the coding task as a short \
+        kebab-case slug.
         """
         let session = LanguageModelSession(instructions: instructions)
         let capped = String(prompt.prefix(promptLimit))
-        // Greedy sampling makes the slug deterministic for a given prompt; the
-        // small token cap bounds latency (a slug is only a handful of tokens).
+        // Greedy sampling makes the slug deterministic for a given prompt. The
+        // token cap bounds latency but must leave headroom for the JSON envelope
+        // around the slug (`{"slug":"..."}`): a truncated object fails to parse
+        // and throws, so keep this comfortably above a 4-word slug plus braces.
         // Use the `sampling:` label, not the newer `samplingMode:`: it exists on
         // both older macOS 26 SDKs (CI runners) and current ones (deprecated but
         // present), so the helper compiles across the SDK skew.
-        let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 16)
+        let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 48)
 
         do {
-            let response = try await session.respond(to: capped, options: options)
-            print(response.content)
+            // Guided generation: the model fills `TaskName.slug` under
+            // constrained decoding, so it cannot return conversational prose.
+            let response = try await session.respond(
+                to: capped, generating: TaskName.self, options: options)
+            print(response.content.slug)
         } catch {
             fail("generation error: \(error)", code: 3)
         }
