@@ -113,7 +113,7 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 cargo test                 # unit tests (engine/slug/context/transcript)
 cargo test foundation -- --ignored   # live on-device helper check (needs the
                                       # Swift build + Apple Intelligence)
-cargo build --release      # produces target/release/herdr-plugin-naming
+cargo build --release      # produces target/release/herdr-plugin-renamer
 cargo fmt                  # format
 
 # On-device naming helper (built by the second [[build]] step on install):

@@ -1,4 +1,4 @@
-//! herdr-plugin-naming
+//! herdr-plugin-renamer
 //!
 //! A herdr event hook (`pane.agent_status_changed`) that renames an
 //! auto-generated worktree branch and its workspace from the agent's first

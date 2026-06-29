@@ -49,5 +49,5 @@ CI runs fmt, clippy, tests, and a release build on both Ubuntu and macOS.
 
 Include your herdr version (`herdr --version`), OS, the agent integration in
 use, and the relevant lines from
-`herdr plugin log list --plugin herdr-plugin-naming` (or the debug log in the
+`herdr plugin log list --plugin herdr-plugin-renamer` (or the debug log in the
 plugin state dir).

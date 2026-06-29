@@ -1,4 +1,4 @@
-# herdr-plugin-naming
+# herdr-plugin-renamer
 
 A [herdr](https://herdr.dev) plugin that renames an auto-generated worktree
 branch and its workspace from the coding agent's first prompt.
@@ -75,7 +75,7 @@ All settings are optional. herdr passes its own environment to hook commands, so
 environment variables must be set wherever herdr is launched. For persistent
 per-install settings that do not depend on the launch environment, use the
 plugin's config dir instead (print it with
-`herdr plugin config-dir herdr-plugin-naming`).
+`herdr plugin config-dir herdr-plugin-renamer`).
 
 | Setting                        | Default        | Notes                                                                 |
 | ------------------------------ | -------------- | --------------------------------------------------------------------- |
@@ -95,13 +95,13 @@ By default the branch is renamed to the bare `<slug>`. To prefix it (e.g.
   launch-env dependency):
 
   ```sh
-  echo yourname > "$(herdr plugin config-dir herdr-plugin-naming)/branch-prefix"
+  echo yourname > "$(herdr plugin config-dir herdr-plugin-renamer)/branch-prefix"
   ```
 
 ## Install
 
 ```sh
-herdr plugin install wyattjoh/herdr-plugin-naming
+herdr plugin install wyattjoh/herdr-plugin-renamer
 ```
 
 On install, herdr runs the build steps: `cargo build --release` always, and
@@ -115,8 +115,8 @@ On install, herdr runs the build steps: `cargo build --release` always, and
 cargo build --release
 swift build -c release --package-path naming-helper   # macOS only, for on-device
 herdr plugin link .
-herdr plugin log list --plugin herdr-plugin-naming    # diagnostics
-herdr plugin unlink herdr-plugin-naming
+herdr plugin log list --plugin herdr-plugin-renamer    # diagnostics
+herdr plugin unlink herdr-plugin-renamer
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full test/lint loop.

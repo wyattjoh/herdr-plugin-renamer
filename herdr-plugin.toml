@@ -1,5 +1,5 @@
-id = "herdr-plugin-naming"
-name = "Herdr Naming"
+id = "herdr-plugin-renamer"
+name = "Herdr Renamer"
 version = "0.1.0"
 min_herdr_version = "0.7.0"
 description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt, via a background on-device (Apple FoundationModels) or Codex naming call."
@@ -26,4 +26,4 @@ platforms = ["macos"]
 # started working. There is no manifest-level event filter in herdr 0.7.x.
 [[events]]
 on = "pane.agent_status_changed"
-command = ["target/release/herdr-plugin-naming"]
+command = ["target/release/herdr-plugin-renamer"]
