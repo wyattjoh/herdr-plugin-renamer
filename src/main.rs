@@ -16,6 +16,7 @@
 mod codex;
 mod context;
 mod engine;
+#[cfg(target_os = "macos")]
 mod foundation;
 mod git;
 mod herdr;
@@ -155,6 +156,7 @@ fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
     let selection = env::var("HERDR_NAMING_ENGINE").ok();
     for eng in engine::engine_chain(selection.as_deref()) {
         let result = match eng {
+            #[cfg(target_os = "macos")]
             engine::Engine::Foundation => foundation::generate_slug(prompt),
             engine::Engine::Codex => codex::generate_slug(prompt, slug_file),
         };

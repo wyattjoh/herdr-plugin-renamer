@@ -35,15 +35,24 @@ chain degrades cleanly: Foundation → Codex → deterministic local slug. Engin
 binaries are overridable via `HERDR_NAMING_FOUNDATION_BIN` and
 `HERDR_NAMING_CODEX_BIN`.
 
+**OS gate:** the `Foundation` engine is `#[cfg(target_os = "macos")]`. Off macOS
+(e.g. Linux) the enum variant, the `foundation` module, and the matching
+`[[build]]` swift step are all compiled/skipped, so the default chain collapses
+to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
+`platforms` are `["macos", "linux"]` (Unix only; the cold phase detaches via
+`setsid`). Verify the Linux build with
+`cargo check --target x86_64-unknown-linux-gnu`.
+
 ## Module map
 
 - `context.rs` — parse the two env JSON blobs, eligibility gate
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
+  (OS-aware: Foundation only on macOS)
 - `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
   `claude` and `codex` (different on-disk formats)
-- `foundation.rs` — on-device engine; shells to the `herdr-namer` Swift helper
-  (15s timeout), sanitizes its stdout
+- `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
+  shells to the `herdr-namer` Swift helper (15s timeout), sanitizes its stdout
 - `codex.rs` — `codex exec --ignore-user-config --ephemeral -s read-only` with a 30s timeout
 - `herdr.rs` — `herdr pane get` (polled) + `herdr workspace rename`
 - `git.rs` — current branch + `git branch -m`
