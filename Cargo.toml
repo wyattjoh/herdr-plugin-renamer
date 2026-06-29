@@ -1,0 +1,15 @@
+[package]
+name = "herdr-plugin-naming"
+version = "0.1.0"
+edition = "2021"
+description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glob = "0.3"
+libc = "0.2"
+
+[profile.release]
+lto = true
+strip = true

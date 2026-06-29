@@ -1,0 +1,18 @@
+id = "herdr-plugin-naming"
+name = "Herdr Naming"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt, via a background Codex call."
+platforms = ["macos"]
+
+# Build step runs on `herdr plugin install` (not on `herdr plugin link`).
+# During local dev, run `cargo build --release` manually before testing.
+[[build]]
+command = ["cargo", "build", "--release"]
+
+# Fires on EVERY agent status transition. The command bails in microseconds
+# (pure env-var reads) unless the pane is an auto-worktree agent that just
+# started working. There is no manifest-level event filter in herdr 0.7.x.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["target/release/herdr-plugin-naming"]
