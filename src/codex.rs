@@ -32,12 +32,20 @@ pub fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
             "exec",
             "--skip-git-repo-check",
             "--ignore-user-config",
+            // Don't persist a rollout session file for these throwaway naming runs.
+            "--ephemeral",
             "-s",
             "read-only",
+            // gpt-5.5 + low is the fastest config available on ChatGPT-account auth:
+            // minimal effort is rejected (image_gen/web_search can't be disabled) and
+            // the faster spark/flash/mini models require API-key auth.
             "-m",
             "gpt-5.5",
             "-c",
             "model_reasoning_effort=low",
+            // Request the fast/priority service tier to shave queue latency.
+            "-c",
+            "service_tier=fast",
             "-o",
         ])
         .arg(slug_file)

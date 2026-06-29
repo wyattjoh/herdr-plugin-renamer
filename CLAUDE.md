@@ -26,7 +26,7 @@ Naming outputs: branch `wyattjoh/<slug>`, workspace `<slug>` (bare kebab).
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
   `claude` and `codex` (different on-disk formats)
-- `codex.rs` — `codex exec --ignore-user-config -s read-only` with a 30s timeout
+- `codex.rs` — `codex exec --ignore-user-config --ephemeral -s read-only` with a 30s timeout
 - `herdr.rs` — `herdr pane get` (polled) + `herdr workspace rename`
 - `git.rs` — current branch + `git branch -m`
 
@@ -49,6 +49,11 @@ Naming outputs: branch `wyattjoh/<slug>`, workspace `<slug>` (bare kebab).
   `~/.codex/sessions/**/rollout-*<uuid>.jsonl`.
 - `--ignore-user-config` on the Codex call disables the user's Codex hooks
   (avoids recursion and nondeterminism); auth still resolves from `CODEX_HOME`.
+- Naming model is `gpt-5.5` + `model_reasoning_effort=low` (~2.5s). That is the
+  fastest config available on ChatGPT-account auth: `minimal` effort is rejected
+  because the `image_gen`/`web_search` tools can't be disabled, and the faster
+  `spark`/`flash`/`*-mini` models are API-key-only. `--ephemeral` keeps these
+  throwaway runs out of `~/.codex/sessions`.
 
 ## Commands
 
