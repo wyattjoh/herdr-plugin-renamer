@@ -33,12 +33,17 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
-  # The on-device helper links Apple FoundationModels (macOS 26 SDK). Runner SDK
-  # versions can lag local Xcode, so the source sticks to widely-available API
-  # labels (e.g. `sampling:` over the newer `samplingMode:`) to build on both.
+  # The on-device helper links Apple FoundationModels (macOS 26 SDK). While the
+  # `macos-latest` label is mid-migration to macOS 26, runners land on either a
+  # macOS 26 image (FoundationModels present) or an older one (module absent), so
+  # this job is best-effort and does not gate the build. The source also sticks
+  # to widely-available API labels (`sampling:` over the newer `samplingMode:`)
+  # so it compiles wherever the SDK is present. Promote to a gate once the
+  # migration completes (or pin a `macos-26` runner).
   swift-helper:
-    name: swift helper
+    name: swift helper (best-effort)
     runs-on: macos-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Build helper
