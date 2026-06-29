@@ -35,16 +35,22 @@ jobs:
 
   # The on-device helper links Apple FoundationModels (macOS 26 SDK). While the
   # `macos-latest` label is mid-migration to macOS 26, runners land on either a
-  # macOS 26 image (FoundationModels present) or an older one (module absent), so
-  # this job is best-effort and does not gate the build. The source also sticks
-  # to widely-available API labels (`sampling:` over the newer `samplingMode:`)
-  # so it compiles wherever the SDK is present. Promote to a gate once the
-  # migration completes (or pin a `macos-26` runner).
+  # macOS 26 image (FoundationModels present) or an older one (module absent).
+  # Rather than fail (or go red-but-ignored via continue-on-error), probe for the
+  # SDK: build for real when it is present (a true gate, catching Swift breakage),
+  # and skip cleanly when it is not. The source also sticks to widely-available
+  # API labels (`sampling:` over the newer `samplingMode:`) so it compiles
+  # wherever the SDK is present.
   swift-helper:
-    name: swift helper (best-effort)
+    name: swift helper
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Build helper
-        run: swift build -c release --package-path naming-helper
+      - name: Build helper (skips if FoundationModels SDK is absent)
+        run: |
+          if echo 'import FoundationModels' | swiftc -typecheck - 2>/dev/null; then
+            echo "FoundationModels available; building helper"
+            swift build -c release --package-path naming-helper
+          else
+            echo "::notice::FoundationModels SDK not on this runner; skipping helper build"
+          fi
