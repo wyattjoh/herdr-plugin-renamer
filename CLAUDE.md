@@ -34,6 +34,10 @@ Naming outputs: branch `wyattjoh/<slug>`, workspace `<slug>` (bare kebab).
 
 - Fail open: every path exits 0; never block herdr.
 - Self-idempotent: a successful rename changes the label, so the gate bails after.
+- The cold phase polls for BOTH the session and the first prompt. Claude reports
+  its session at SessionStart (before the prompt) and stays `working` with no new
+  event, so a single transcript read can miss the prompt and never retry. Polling
+  the prompt (not just the session) is what makes the Claude path reliable.
 - Claim marker keyed on `workspace_id` in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are

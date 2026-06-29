@@ -32,6 +32,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const CLAIM_TTL: Duration = Duration::from_secs(120);
 const SESSION_POLL_ATTEMPTS: u32 = 12;
 const SESSION_POLL_DELAY: Duration = Duration::from_millis(500);
+const PROMPT_POLL_ATTEMPTS: u32 = 20;
+const PROMPT_POLL_DELAY: Duration = Duration::from_millis(750);
 
 fn main() {
     if env::var("HERDR_NAMING_PHASE").as_deref() == Ok("cold") {
@@ -95,10 +97,15 @@ fn cold_phase() {
         };
     debug_log(&format!("cold: session agent={agent} id={session_id}"));
 
-    let prompt = match transcript::read_first_prompt(&agent, &session_id) {
+    // Poll for the first prompt, not just read once. Claude reports its session
+    // id at SessionStart (before the prompt is submitted) and flushes the user
+    // line a beat after the pane flips to `working`, so a single read can miss
+    // it. Since the agent then stays `working` with no new event to retry on, we
+    // must wait here rather than bail.
+    let prompt = match poll_first_prompt(&agent, &session_id) {
         Some(prompt) => prompt,
         None => {
-            debug_log("cold: no first prompt yet, removing claim");
+            debug_log("cold: no first prompt after poll, removing claim");
             let _ = std::fs::remove_file(&marker);
             return;
         }
@@ -142,6 +149,21 @@ fn cold_phase() {
     // Keep the marker as a "done" record (now older than CLAIM_TTL over time,
     // but the eligibility gate already bails once the label is renamed).
     let _ = std::fs::write(&marker, now_secs().to_string());
+}
+
+/// Retry `read_first_prompt` until the transcript has the user's first message
+/// or we exhaust the attempts. Covers the lag between the pane reporting
+/// `working` and the agent flushing the first user line to its transcript.
+fn poll_first_prompt(agent: &str, session_id: &str) -> Option<String> {
+    for attempt in 0..PROMPT_POLL_ATTEMPTS {
+        if let Some(prompt) = transcript::read_first_prompt(agent, session_id) {
+            return Some(prompt);
+        }
+        if attempt + 1 < PROMPT_POLL_ATTEMPTS {
+            std::thread::sleep(PROMPT_POLL_DELAY);
+        }
+    }
+    None
 }
 
 /// Re-exec ourselves in the cold phase, detached into a new session so it
