@@ -9,7 +9,8 @@
 //!     vars alone unless an auto-worktree agent just started working, then
 //!     forks the cold phase detached and exits.
 //!   - COLD (`HERDR_NAMING_PHASE=cold`): does the slow work (poll for the
-//!     session, read the first prompt, call Codex, rename branch + workspace).
+//!     session, read the first prompt, generate a slug via the engine chain,
+//!     rename branch + workspace).
 //!
 //! Every path exits 0 (fail open) so the hook never wedges herdr.
 
@@ -130,12 +131,11 @@ fn cold_phase() {
 
     // Safety re-check: only rename a branch still on the auto `worktree/` name,
     // so a manual rename racing us is never clobbered.
+    let branch = compose_branch(resolve_branch_prefix().as_deref(), &slug);
     match git::current_branch(&checkout_path) {
         Some(current) if current.starts_with("worktree/") => {
-            let ok = git::rename_current_branch(&checkout_path, &format!("wyattjoh/{slug}"));
-            debug_log(&format!(
-                "cold: branch {current} -> wyattjoh/{slug} ok={ok}"
-            ));
+            let ok = git::rename_current_branch(&checkout_path, &branch);
+            debug_log(&format!("cold: branch {current} -> {branch} ok={ok}"));
         }
         other => debug_log(&format!("cold: skip branch rename, current={other:?}")),
     }
@@ -169,6 +169,32 @@ fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Join an optional branch prefix and the slug into the final branch name.
+/// Trailing/leading slashes and surrounding whitespace on the prefix are
+/// trimmed; an empty or whitespace-only prefix yields the bare slug.
+fn compose_branch(prefix: Option<&str>, slug: &str) -> String {
+    match prefix
+        .map(|p| p.trim().trim_matches('/'))
+        .filter(|p| !p.is_empty())
+    {
+        Some(prefix) => format!("{prefix}/{slug}"),
+        None => slug.to_string(),
+    }
+}
+
+/// Resolve the branch prefix, in priority order: the `HERDR_NAMING_BRANCH_PREFIX`
+/// env var (override, incl. set-empty to force no prefix), then a `branch-prefix`
+/// file in the per-plugin config dir (`HERDR_PLUGIN_CONFIG_DIR`), else `None` for
+/// no prefix. The config file is the install-friendly path: it does not depend on
+/// the environment herdr was launched with.
+fn resolve_branch_prefix() -> Option<String> {
+    if let Ok(prefix) = env::var("HERDR_NAMING_BRANCH_PREFIX") {
+        return Some(prefix);
+    }
+    let dir = env::var("HERDR_PLUGIN_CONFIG_DIR").ok()?;
+    std::fs::read_to_string(format!("{dir}/branch-prefix")).ok()
 }
 
 /// Retry `read_first_prompt` until the transcript has the user's first message
@@ -268,6 +294,45 @@ fn debug_log(message: &str) {
             now_secs(),
             std::process::id(),
             message
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compose_branch;
+
+    #[test]
+    fn no_prefix_is_bare_slug() {
+        assert_eq!(compose_branch(None, "add-dark-mode"), "add-dark-mode");
+        assert_eq!(compose_branch(Some(""), "add-dark-mode"), "add-dark-mode");
+        assert_eq!(
+            compose_branch(Some("   "), "add-dark-mode"),
+            "add-dark-mode"
+        );
+    }
+
+    #[test]
+    fn prefix_is_joined_with_a_slash() {
+        assert_eq!(
+            compose_branch(Some("wyattjoh"), "add-dark-mode"),
+            "wyattjoh/add-dark-mode"
+        );
+    }
+
+    #[test]
+    fn surrounding_slashes_and_whitespace_are_trimmed() {
+        assert_eq!(
+            compose_branch(Some("  /wyattjoh/  "), "add-dark-mode"),
+            "wyattjoh/add-dark-mode"
+        );
+    }
+
+    #[test]
+    fn internal_slashes_in_prefix_are_kept() {
+        assert_eq!(
+            compose_branch(Some("team/wyatt"), "add-dark-mode"),
+            "team/wyatt/add-dark-mode"
         );
     }
 }

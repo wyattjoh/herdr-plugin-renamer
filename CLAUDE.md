@@ -20,7 +20,10 @@ Single binary, two phases (`src/main.rs`):
   `git::rename_current_branch` to `wyattjoh/<slug>` → `herdr::workspace_rename`
   to `<slug>`.
 
-Naming outputs: branch `wyattjoh/<slug>`, workspace `<slug>` (bare kebab).
+Naming outputs: branch `<prefix>/<slug>` (bare `<slug>` when no prefix is
+configured; `main::compose_branch` joins them), workspace `<slug>` (bare kebab).
+The prefix comes from `main::resolve_branch_prefix`: `HERDR_NAMING_BRANCH_PREFIX`
+env, then a `branch-prefix` file in `HERDR_PLUGIN_CONFIG_DIR`, else none.
 
 ## Naming engines
 
