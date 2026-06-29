@@ -32,13 +32,12 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
-  # The on-device helper links Apple FoundationModels, which needs the macOS 26
-  # SDK. Until GitHub's macOS runners ship it, this job is best-effort and does
-  # not gate the build.
+  # The on-device helper links Apple FoundationModels (macOS 26 SDK). Runner SDK
+  # versions can lag local Xcode, so the source sticks to widely-available API
+  # labels (e.g. `sampling:` over the newer `samplingMode:`) to build on both.
   swift-helper:
-    name: swift helper (best-effort)
+    name: swift helper
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Build helper

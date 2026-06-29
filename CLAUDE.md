@@ -87,8 +87,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   exit so Rust falls back to Codex.
 - The model lives behind a shared OS daemon, so the short-lived helper does not
   reload weights per spawn: warm ~0.3s, cold ~1-2s end-to-end. Both beat the
-  Codex bar. Use `samplingMode: .greedy` for deterministic slugs; the file must
-  not be named `main.swift` (conflicts with `@main`).
+  Codex bar. Use `GenerationOptions(sampling: .greedy, ...)` for deterministic
+  slugs: keep the older `sampling:` label (not the newer `samplingMode:`) so the
+  helper builds across the SDK skew between local Xcode and CI runners (locally
+  it warns deprecated but compiles). The source file must not be named
+  `main.swift` (conflicts with `@main`).
 
 - herdr `[[events]]` has NO filter/once/debounce; the hook fires on every event.
 - Branch detection needs no git call: `workspace_label` (`worktree-<adj>-<noun>-<hex4>`)

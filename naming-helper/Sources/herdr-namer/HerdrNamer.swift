@@ -57,7 +57,10 @@ struct HerdrNamer {
         let capped = String(prompt.prefix(promptLimit))
         // Greedy sampling makes the slug deterministic for a given prompt; the
         // small token cap bounds latency (a slug is only a handful of tokens).
-        let options = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: 16)
+        // Use the `sampling:` label, not the newer `samplingMode:`: it exists on
+        // both older macOS 26 SDKs (CI runners) and current ones (deprecated but
+        // present), so the helper compiles across the SDK skew.
+        let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 16)
 
         do {
             let response = try await session.respond(to: capped, options: options)
