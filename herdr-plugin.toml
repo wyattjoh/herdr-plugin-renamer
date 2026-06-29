@@ -2,13 +2,20 @@ id = "herdr-plugin-naming"
 name = "Herdr Naming"
 version = "0.1.0"
 min_herdr_version = "0.7.0"
-description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt, via a background Codex call."
+description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt, via a background on-device (Apple FoundationModels) or Codex naming call."
 platforms = ["macos"]
 
-# Build step runs on `herdr plugin install` (not on `herdr plugin link`).
-# During local dev, run `cargo build --release` manually before testing.
+# Build steps run on `herdr plugin install` (not on `herdr plugin link`).
+# During local dev, run both manually before testing.
 [[build]]
 command = ["cargo", "build", "--release"]
+
+# The on-device naming engine: a SwiftPM CLI that calls Apple's FoundationModels.
+# Optional at runtime (the plugin falls back to Codex when it is missing or
+# Apple Intelligence is unavailable), but built here so `foundation` works
+# out of the box on eligible macOS 26+ machines.
+[[build]]
+command = ["swift", "build", "-c", "release", "--package-path", "naming-helper"]
 
 # Fires on EVERY agent status transition. The command bails in microseconds
 # (pure env-var reads) unless the pane is an auto-worktree agent that just

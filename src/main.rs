@@ -15,6 +15,8 @@
 
 mod codex;
 mod context;
+mod engine;
+mod foundation;
 mod git;
 mod herdr;
 mod slug;
@@ -116,19 +118,14 @@ fn cold_phase() {
         prompt.chars().take(80).collect::<String>()
     ));
 
-    // Name it: Codex first, deterministic local fallback otherwise.
+    // Name it: walk the engine chain (on-device first by default, Codex
+    // fallback), then a deterministic local slug if every engine fails.
     let slug_file = format!("{}/{}.slug", state_dir(), workspace_id);
-    let slug = match codex::generate_slug(&prompt, Path::new(&slug_file)) {
-        Some(slug) => {
-            debug_log(&format!("cold: codex slug={slug}"));
-            slug
-        }
-        None => {
-            let slug = slug::fallback_from_prompt(&prompt);
-            debug_log(&format!("cold: codex failed, fallback slug={slug}"));
-            slug
-        }
-    };
+    let slug = generate_slug(&prompt, Path::new(&slug_file)).unwrap_or_else(|| {
+        let slug = slug::fallback_from_prompt(&prompt);
+        debug_log(&format!("cold: all engines failed, fallback slug={slug}"));
+        slug
+    });
 
     // Safety re-check: only rename a branch still on the auto `worktree/` name,
     // so a manual rename racing us is never clobbered.
@@ -149,6 +146,27 @@ fn cold_phase() {
     // Keep the marker as a "done" record (now older than CLAIM_TTL over time,
     // but the eligibility gate already bails once the label is renamed).
     let _ = std::fs::write(&marker, now_secs().to_string());
+}
+
+/// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
+/// slug an engine produces. `None` means every engine in the chain failed (so
+/// the caller uses the deterministic local fallback).
+fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
+    let selection = env::var("HERDR_NAMING_ENGINE").ok();
+    for eng in engine::engine_chain(selection.as_deref()) {
+        let result = match eng {
+            engine::Engine::Foundation => foundation::generate_slug(prompt),
+            engine::Engine::Codex => codex::generate_slug(prompt, slug_file),
+        };
+        match result {
+            Some(slug) => {
+                debug_log(&format!("cold: {eng:?} slug={slug}"));
+                return Some(slug);
+            }
+            None => debug_log(&format!("cold: {eng:?} produced no slug")),
+        }
+    }
+    None
 }
 
 /// Retry `read_first_prompt` until the transcript has the user's first message
