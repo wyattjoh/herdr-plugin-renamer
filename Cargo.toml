@@ -2,7 +2,7 @@
 name = "herdr-plugin-renamer"
 version = "0.1.0"
 edition = "2021"
-description = "Renames an auto-generated herdr worktree branch and workspace from the agent's first prompt."
+description = "Renames numeric herdr tabs, and auto-generated worktree branches/workspaces, from the agent's first prompt."
 authors = ["Wyatt Johnson <wyattjoh@gmail.com>"]
 license = "MIT"
 readme = "README.md"
