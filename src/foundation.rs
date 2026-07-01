@@ -13,17 +13,18 @@ use std::time::{Duration, Instant};
 // On-device generation is sub-second warm and ~1-2s cold; this is a generous
 // ceiling that still guards against a wedged model call.
 const TIMEOUT: Duration = Duration::from_secs(15);
-const PROMPT_LIMIT: usize = 2000;
+const PROMPT_HEAD_LIMIT: usize = 1200;
+const PROMPT_TAIL_LIMIT: usize = 1200;
 
 /// Run the Swift helper to produce a slug candidate. The helper prints a bare
 /// candidate to stdout and exits 0 on success, or writes a reason to stderr and
 /// exits non-zero when Apple Intelligence is unavailable. We sanitize stdout.
 pub fn generate_slug(prompt: &str) -> Option<String> {
     let bin = helper_bin()?;
-    let truncated: String = prompt.chars().take(PROMPT_LIMIT).collect();
+    let excerpt = prompt_excerpt(prompt);
 
     let mut child = Command::new(&bin)
-        .arg(&truncated)
+        .arg(&excerpt)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -52,6 +53,22 @@ pub fn generate_slug(prompt: &str) -> Option<String> {
     } else {
         Some(slug)
     }
+}
+
+/// Keep the final instruction visible for long prompts. Coding-agent prompts
+/// often start with pasted context or logs and end with the actual request, so
+/// a head/tail excerpt gives the model more useful signal than a front-only cap.
+fn prompt_excerpt(prompt: &str) -> String {
+    let char_count = prompt.chars().count();
+    let limit = PROMPT_HEAD_LIMIT + PROMPT_TAIL_LIMIT;
+    if char_count <= limit {
+        return prompt.to_string();
+    }
+
+    let head: String = prompt.chars().take(PROMPT_HEAD_LIMIT).collect();
+    let tail_start = char_count.saturating_sub(PROMPT_TAIL_LIMIT);
+    let tail: String = prompt.chars().skip(tail_start).collect();
+    format!("{head}\n\n[... middle omitted for naming ...]\n\n{tail}")
 }
 
 /// Resolve the helper binary path. Honors `HERDR_NAMING_FOUNDATION_BIN`, else
@@ -142,5 +159,27 @@ mod tests {
             .expect("expected a slug from the on-device helper");
 
         assert_eq!(slug, "branch-commits");
+    }
+
+    #[test]
+    fn prompt_excerpt_keeps_short_prompts_intact() {
+        assert_eq!(prompt_excerpt("short prompt"), "short prompt");
+    }
+
+    #[test]
+    fn prompt_excerpt_keeps_head_and_tail_for_long_prompts() {
+        let prompt = format!(
+            "{}{}{}",
+            "a".repeat(PROMPT_HEAD_LIMIT),
+            "b".repeat(100),
+            "c".repeat(PROMPT_TAIL_LIMIT)
+        );
+
+        let excerpt = prompt_excerpt(&prompt);
+
+        assert!(excerpt.starts_with(&"a".repeat(PROMPT_HEAD_LIMIT)));
+        assert!(excerpt.contains("[... middle omitted for naming ...]"));
+        assert!(excerpt.ends_with(&"c".repeat(PROMPT_TAIL_LIMIT)));
+        assert!(!excerpt.contains(&"b".repeat(100)));
     }
 }

@@ -33,6 +33,9 @@ Foundation-generated slugs should be compact noun-topic labels, not literal
 sentence summaries. Prefer labels such as `current-file` over
 `change-selected-file-to-current`. The helper must ground labels in the actual
 prompt and avoid introducing absent concepts from examples or instructions.
+The default Foundation path is two-pass: generate several candidates, sanitize
+and dedupe them, then ask FoundationModels to select exactly one candidate from
+the cleaned list. Codex remains a fallback only when Foundation fails.
 
 ## Naming engines
 
@@ -64,16 +67,19 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
   `claude` and `codex` (different on-disk formats)
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
-  shells to the `herdr-namer` Swift helper (15s timeout), sanitizes its stdout
+  builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
+  helper (15s timeout), sanitizes its stdout
 - `codex.rs` — `codex exec --ignore-user-config --ephemeral -s read-only` with a 30s timeout
 - `herdr.rs` — `herdr pane get` (polled), `herdr tab get/rename`, and
   `herdr workspace rename`
 - `git.rs` — current branch + `git branch -m`
-- `naming-helper/` — SwiftPM package (`herdr-namer`): a `LanguageModelSession`
-  guided-generation call (`respond(to:generating:)` into a `@Generable TaskName`
-  with one `slug` field) → bare slug on stdout (exit 0), or a reason on stderr
-  (non-zero) when Apple Intelligence is unavailable. Same stdout-or-fail contract
-  as `codex`.
+- `naming-helper/` — SwiftPM package (`herdr-namer`): two FoundationModels
+  guided-generation calls. The first fills a `@Generable TaskNameCandidates`
+  with candidate slugs; the helper sanitizes and dedupes them. The second fills
+  a `@Generable SelectedTaskName` by copying one cleaned candidate. The helper
+  prints the selected bare slug on stdout (exit 0), or a reason on stderr
+  (non-zero) when Apple Intelligence is unavailable or generation fails. Same
+  stdout-or-fail contract as `codex`.
 
 ## Conventions
 
@@ -101,25 +107,38 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   exit so Rust falls back to Codex.
 - The model lives behind a shared OS daemon, so the short-lived helper does not
   reload weights per spawn: warm ~0.3s, cold ~1-2s end-to-end. Both beat the
-  Codex bar. Use `GenerationOptions(sampling: .greedy, ...)` for deterministic
-  slugs: keep the older `sampling:` label (not the newer `samplingMode:`) so the
-  helper builds across the SDK skew between local Xcode and CI runners (locally
-  it warns deprecated but compiles). The source file must not be named
-  `main.swift` (conflicts with `@main`).
-- Naming uses guided generation, not free text: the model fills a `@Generable`
-  `slug` field via `respond(to:generating:)` under constrained decoding, so it
-  cannot return conversational prose (a plain `respond(to:)` once produced
-  "Sure, here are some ideas for..." → branch `sure-here-are-some-ideas-for`).
-  The `TaskName.slug` guide asks for a 1-3 word noun-topic label, explicitly
-  drops generic task verbs, and requires concepts from the actual prompt or
-  direct synonyms. Avoid unrelated concrete examples in the Foundation prompt:
-  they can leak into slugs (for example, an unrelated OAuth example once caused
-  `tell me about the commits on this branch` to become `oauth-redirect`).
-  `maximumResponseTokens` must clear the JSON envelope (`{"slug":"..."}`) plus
-  the slug, else a truncated object throws and falls back to Codex; 48 is the
-  current floor. The on-device daemon can be `.modelNotReady` for the first
-  call(s) after a cold start, so the live `cargo test foundation -- --ignored`
-  check is flaky until warm (fails open to Codex by design); re-run once warm.
+  Codex bar. Use `greedyOptions(maximumResponseTokens:)` for deterministic
+  slugs. That helper selects `GenerationOptions(sampling: .greedy, ...)` on
+  Swift 6.2/Xcode 26 and `GenerationOptions(samplingMode: .greedy, ...)` on
+  Swift 6.4/Xcode 27, keeping strict warning builds clean while retaining Xcode
+  26 support. The source file must not be named `main.swift` (conflicts with
+  `@main`).
+- Naming uses guided generation, not free text: the model fills `@Generable`
+  structs via `respond(to:generating:)` under constrained decoding, so it cannot
+  return conversational prose (a plain `respond(to:)` once produced "Sure, here
+  are some ideas for..." -> branch `sure-here-are-some-ideas-for`). The helper
+  fills named `TaskNameCandidates` slots (`primary`, `artifact`, `outcome`,
+  `contextual`, `concise`, `alternate`), then sanitizes and dedupes candidates
+  with the same ASCII slug rules as Rust. It then asks a separate judge session
+  to fill `SelectedTaskName.slug` by copying exactly one cleaned candidate. If
+  the judge invents or mutates a slug, the helper falls back to the first cleaned
+  candidate. The candidate guides ask for 1-3 word noun-topic labels, explicitly
+  drop generic task verbs, and require concepts from the actual prompt or direct
+  synonyms. Avoid unrelated concrete examples in the Foundation prompt: they can
+  leak into slugs (for example, an unrelated OAuth example once caused `tell me
+  about the commits on this branch` to become `oauth-redirect`).
+  `maximumResponseTokens` must clear the JSON envelope plus generated values,
+  else a truncated object throws and falls back to Codex; the candidate pass
+  currently uses 160 tokens and the judge pass uses 64. The on-device daemon can
+  be `.modelNotReady` for the first call(s) after a cold start, so the live
+  `cargo test foundation -- --ignored` check is flaky until warm (fails open to
+  Codex by design); re-run once warm.
+
+- Foundation prompt input is capped with a head/tail excerpt, not a front-only
+  truncation: Rust sends 1200 characters from the start and 1200 from the end
+  with an omitted-middle marker when a prompt is long. The Swift helper has the
+  same excerpt logic for standalone use. This keeps final user instructions
+  visible when long prompts start with pasted context, logs, or prior notes.
 
 - herdr `[[events]]` has NO filter/once/debounce; the hook fires on every event.
 - Branch/workspace renaming uses a git safety re-check, not workspace label

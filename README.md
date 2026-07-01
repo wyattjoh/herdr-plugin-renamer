@@ -32,11 +32,15 @@ and falling back automatically:
 - `HERDR_NAMING_ENGINE=codex`: skip the on-device engine entirely.
 - **Off macOS** (e.g. Linux), the on-device engine is compiled out of the binary;
   the chain is Codex then the local fallback regardless of the setting.
-- The Foundation engine prefers compact noun-topic labels, such as
-  `current-file`, instead of literal restatements like
+- The Foundation engine generates several compact noun-topic candidates, asks
+  FoundationModels to choose the strongest one, and returns the selected slug.
+  It prefers labels such as `current-file`, instead of literal restatements like
   `change-selected-file-to-current`.
 - Foundation-generated labels are grounded in the actual prompt, so unrelated
   concepts from instructions or examples should not appear in the result.
+- For long prompts, Foundation receives a bounded head/tail excerpt rather than
+  only the first characters, so the final instruction stays visible even after
+  pasted logs or context.
 
 So naming always succeeds: a real model when one is available, a local slug
 otherwise.
@@ -73,6 +77,9 @@ retry.
 
 - For the **on-device** engine: macOS 26 (Tahoe) or newer on Apple Silicon, with
   Apple Intelligence enabled. No app bundle, entitlement, or signing required.
+  The helper builds with both Xcode 26 and Xcode 27 beta. It uses
+  `GenerationOptions(sampling:)` on Swift 6.2/Xcode 26, and
+  `GenerationOptions(samplingMode:)` on Swift 6.4/Xcode 27.
 - For the **Codex** engine / fallback: the `codex` CLI on `PATH`, logged in
   (`codex login status`).
 
