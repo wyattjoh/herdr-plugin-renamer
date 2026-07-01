@@ -113,4 +113,34 @@ mod tests {
             "slug had unexpected chars: {slug}"
         );
     }
+
+    #[test]
+    #[ignore]
+    fn helper_prefers_compact_noun_topic_labels() {
+        let helper = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/naming-helper/.build/release/herdr-namer"
+        );
+        env::set_var("HERDR_NAMING_FOUNDATION_BIN", helper);
+
+        let slug = generate_slug("Change selected file to current")
+            .expect("expected a slug from the on-device helper");
+
+        assert_eq!(slug, "current-file");
+    }
+
+    #[test]
+    #[ignore]
+    fn helper_uses_the_actual_prompt_topic_instead_of_examples() {
+        let helper = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/naming-helper/.build/release/herdr-namer"
+        );
+        env::set_var("HERDR_NAMING_FOUNDATION_BIN", helper);
+
+        let slug = generate_slug("tell me about the commits on this branch")
+            .expect("expected a slug from the on-device helper");
+
+        assert_eq!(slug, "branch-commits");
+    }
 }

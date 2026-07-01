@@ -5,8 +5,8 @@ agent's first prompt. When that prompt happens in an auto-generated linked
 worktree, it also renames the git branch and workspace.
 
 When you start an agent in a numbered herdr tab like `1`, this plugin watches
-for the agent's first real prompt, asks a language model to summarize it as a
-short kebab-case slug, then renames the tab to that slug.
+for the agent's first real prompt, asks a language model to name the task topic
+as a compact noun-topic kebab-case slug, then renames the tab to that slug.
 
 If the pane is also in a herdr linked worktree with a branch like
 `worktree/silver-field-3fd7`, the plugin additionally renames:
@@ -32,6 +32,11 @@ and falling back automatically:
 - `HERDR_NAMING_ENGINE=codex`: skip the on-device engine entirely.
 - **Off macOS** (e.g. Linux), the on-device engine is compiled out of the binary;
   the chain is Codex then the local fallback regardless of the setting.
+- The Foundation engine prefers compact noun-topic labels, such as
+  `current-file`, instead of literal restatements like
+  `change-selected-file-to-current`.
+- Foundation-generated labels are grounded in the actual prompt, so unrelated
+  concepts from instructions or examples should not appear in the result.
 
 So naming always succeeds: a real model when one is available, a local slug
 otherwise.

@@ -39,8 +39,14 @@ func readPrompt() -> String {
 @Generable
 struct TaskName {
     @Guide(
-        description: "A short kebab-case slug, 2 to 4 words, all lowercase, "
-            + "hyphen-separated, summarizing the coding task. "
+        description: "A compact noun-topic kebab-case slug, 1 to 3 words, "
+            + "all lowercase, hyphen-separated. Name the topic or artifact, "
+            + "not the user's full instruction. Use concepts from the actual "
+            + "prompt, or direct synonyms, and never introduce unrelated topics. "
+            + "Drop generic task/request verbs like tell, explain, list, show, "
+            + "change, update, fix, add, make, set, and use unless the verb is "
+            + "the domain concept. Avoid prepositions like to, from, on, and "
+            + "about. Prefer adjective-noun or context-noun labels. "
             + "No quotes, no spaces, no surrounding text."
     )
     let slug: String
@@ -64,8 +70,21 @@ struct HerdrNamer {
         }
 
         let instructions = """
-        You name software tasks. Summarize the coding task as a short \
-        kebab-case slug.
+        You name software tasks for tabs, workspaces, and git branches.
+        Produce compact noun-topic labels, not literal restatements.
+
+        Ground the label in the user's actual prompt. Prefer nouns and domain
+        terms from that prompt, or direct synonyms.
+        Drop generic request verbs and filler words.
+        For change requests that move something "to" a target state, name the
+        resulting topic or target state instead of the whole command phrase.
+        For selected-file-to-current prompts, the label is current-file.
+        Prefer adjective-noun order for other state labels too.
+        Include enough noun context to avoid generic labels, such as
+        branch-commits instead of commits.
+        Avoid prepositions in the label.
+        Do not introduce absent concepts, feature names, protocols, or examples.
+        Keep labels short enough to scan in a tab bar.
         """
         let session = LanguageModelSession(instructions: instructions)
         let capped = String(prompt.prefix(promptLimit))

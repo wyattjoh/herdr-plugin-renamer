@@ -29,6 +29,11 @@ worktree branch rename. The prefix comes from `main::resolve_branch_prefix`:
 `HERDR_NAMING_BRANCH_PREFIX` env, then a `branch-prefix` file in
 `HERDR_PLUGIN_CONFIG_DIR`, else none.
 
+Foundation-generated slugs should be compact noun-topic labels, not literal
+sentence summaries. Prefer labels such as `current-file` over
+`change-selected-file-to-current`. The helper must ground labels in the actual
+prompt and avoid introducing absent concepts from examples or instructions.
+
 ## Naming engines
 
 `generate_slug` (in `main.rs`) walks an ordered chain from `engine::engine_chain`,
@@ -105,8 +110,13 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   `slug` field via `respond(to:generating:)` under constrained decoding, so it
   cannot return conversational prose (a plain `respond(to:)` once produced
   "Sure, here are some ideas for..." → branch `sure-here-are-some-ideas-for`).
-  `maximumResponseTokens` must clear the JSON envelope (`{"slug":"..."}`) plus a
-  4-word slug, else a truncated object throws and falls back to Codex; 48 is the
+  The `TaskName.slug` guide asks for a 1-3 word noun-topic label, explicitly
+  drops generic task verbs, and requires concepts from the actual prompt or
+  direct synonyms. Avoid unrelated concrete examples in the Foundation prompt:
+  they can leak into slugs (for example, an unrelated OAuth example once caused
+  `tell me about the commits on this branch` to become `oauth-redirect`).
+  `maximumResponseTokens` must clear the JSON envelope (`{"slug":"..."}`) plus
+  the slug, else a truncated object throws and falls back to Codex; 48 is the
   current floor. The on-device daemon can be `.modelNotReady` for the first
   call(s) after a cold start, so the live `cargo test foundation -- --ignored`
   check is flaky until warm (fails open to Codex by design); re-run once warm.
