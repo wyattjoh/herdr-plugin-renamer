@@ -65,7 +65,9 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
   (OS-aware: Foundation only on macOS)
 - `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
-  `claude` and `codex` (different on-disk formats)
+  `claude` and `codex` (different on-disk formats). Claude slash-command
+  wrappers are used as a fallback naming prompt, including `command-args`, when
+  no normal non-meta user prompt exists; expanded skill bodies remain ignored.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
@@ -90,6 +92,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   its session at SessionStart (before the prompt) and stays `working` with no new
   event, so a single transcript read can miss the prompt and never retry. Polling
   the prompt (not just the session) is what makes the Claude path reliable.
+- Claude slash-command starts count as a prompt fallback. Use the invocation
+  wrapper (`command-message`/`command-name` plus `command-args`) for naming, but
+  never the expanded skill payload (`isMeta:true`) because it is framework text,
+  not user intent.
 - Claim marker keyed on tab id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
   A separate done marker is written after cold-phase completion.

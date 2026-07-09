@@ -40,8 +40,11 @@ pub fn first_prompt(agent: &str, contents: &str) -> Option<String> {
 
 /// Claude Code JSONL: the first `type=="user"` line that is not meta, carries
 /// genuine text (string or `text` blocks), and is not a slash/local-command
-/// wrapper.
+/// wrapper. If no such line exists, falls back to the first non-ignored
+/// slash-command invocation via `claude_command_prompt`.
 fn first_prompt_claude(contents: &str) -> Option<String> {
+    let mut command_fallback = None;
+
     for line in contents.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -63,12 +66,19 @@ fn first_prompt_claude(contents: &str) -> Option<String> {
         };
         let text = extract_claude_text(content);
         let text = text.trim();
-        if text.is_empty() || is_claude_command(text) {
+        if text.is_empty() {
+            continue;
+        }
+        if is_claude_command(text) {
+            if command_fallback.is_none() {
+                command_fallback = claude_command_prompt(text);
+            }
             continue;
         }
         return Some(text.to_string());
     }
-    None
+
+    command_fallback
 }
 
 /// `message.content` is usually a string, sometimes an array of blocks. Only
@@ -92,6 +102,75 @@ fn is_claude_command(text: &str) -> bool {
     text.starts_with("<command-name")
         || text.starts_with("<command-message")
         || text.starts_with("<local-command")
+}
+
+fn claude_command_prompt(text: &str) -> Option<String> {
+    if text.starts_with("<local-command") {
+        return None;
+    }
+
+    // `command-message` is a display label, not the raw slash invocation, but
+    // for the builtins in `is_ignored_command` it equals the canonical name
+    // (e.g. "clear", "model"). Falls back to `command-name` when absent.
+    let command = extract_tag(text, "command-message")
+        .or_else(|| extract_tag(text, "command-name"))?
+        .trim()
+        .trim_start_matches('/')
+        .to_string();
+    if command.is_empty() {
+        return None;
+    }
+    if is_ignored_command(&command) {
+        return None;
+    }
+
+    let args = extract_tag(text, "command-args").unwrap_or_default();
+    let args = args.trim();
+
+    if args.is_empty() {
+        Some(command)
+    } else {
+        Some(format!("{command} {args}"))
+    }
+}
+
+fn extract_tag(text: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)? + start;
+    Some(text[start..end].to_string())
+}
+
+/// Denylist of Claude Code builtin session-control commands that carry no
+/// task intent (settings, housekeeping, meta), so they should never win the
+/// command-fallback slot over a later task-bearing command.
+fn is_ignored_command(command: &str) -> bool {
+    matches!(
+        command,
+        "add-dir"
+            | "bug"
+            | "clear"
+            | "color"
+            | "compact"
+            | "config"
+            | "cost"
+            | "doctor"
+            | "export"
+            | "help"
+            | "login"
+            | "logout"
+            | "memory"
+            | "model"
+            | "permissions"
+            | "plugin"
+            | "plugins"
+            | "reload-plugins"
+            | "reload-skills"
+            | "resume"
+            | "skills"
+            | "status"
+    )
 }
 
 /// Codex rollout JSONL: the first `response_item` user `message` whose
@@ -179,6 +258,95 @@ mod tests {
         assert_eq!(
             first_prompt("claude", jsonl).as_deref(),
             Some("Refactor the parser")
+        );
+    }
+
+    #[test]
+    fn claude_command_wrapper_falls_back_when_no_prompt() {
+        let jsonl = concat!(
+            r#"{"type":"user","isMeta":false,"message":{"content":"<command-message>improve-codebase-architecture</command-message>\n<command-name>/improve-codebase-architecture</command-name>"}}"#,
+            "\n",
+            r#"{"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"Base directory for this skill: /tmp/skills/improve-codebase-architecture\n\n# Improve Codebase Architecture"}]}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("improve-codebase-architecture")
+        );
+    }
+
+    #[test]
+    fn claude_command_wrapper_includes_args() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-message>improve-codebase-architecture</command-message>\n<command-name>/improve-codebase-architecture</command-name>\n<command-args>focus on persistence and snapshots</command-args>"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("improve-codebase-architecture focus on persistence and snapshots")
+        );
+    }
+
+    #[test]
+    fn claude_command_fallback_skips_clear_before_task_command() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":"<command-message>handoff</command-message>\n<command-name>/handoff</command-name>\n<command-args>the next agent should finish the visual pass</command-args>"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("handoff the next agent should finish the visual pass")
+        );
+    }
+
+    #[test]
+    fn claude_command_fallback_skips_session_control_commands() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>claude-opus-4-7</command-args>"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":"<command-message>improve-codebase-architecture</command-message>\n<command-name>/improve-codebase-architecture</command-name>\n<command-args>focus on persistence and snapshots</command-args>"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("improve-codebase-architecture focus on persistence and snapshots")
+        );
+    }
+
+    #[test]
+    fn claude_command_fallback_skips_logout() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-name>/logout</command-name>\n<command-message>logout</command-message>\n<command-args></command-args>"}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":"<command-message>handoff</command-message>\n<command-name>/handoff</command-name>\n<command-args>the next agent should finish the visual pass</command-args>"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("handoff the next agent should finish the visual pass")
+        );
+    }
+
+    #[test]
+    fn claude_local_command_wrapper_excluded_from_fallback() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<local-command-stdout>ok</local-command-stdout>"}}"#,
+            "\n",
+        );
+        assert!(first_prompt("claude", jsonl).is_none());
+    }
+
+    #[test]
+    fn claude_command_fallback_uses_command_name_without_message() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-name>/handoff</command-name>\n<command-args>finish the visual pass</command-args>"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("claude", jsonl).as_deref(),
+            Some("handoff finish the visual pass")
         );
     }
 
