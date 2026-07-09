@@ -129,8 +129,16 @@ On install, herdr runs the build steps: `cargo build --release` always, and
 `herdr plugin link` does NOT run the build steps, so build manually first:
 
 ```sh
+just build    # build the Rust binary, plus the Swift helper on macOS
+just link     # run build, replace any existing local link, and link this checkout
+```
+
+Without `just`, run the steps directly:
+
+```sh
 cargo build --release
 swift build -c release --package-path naming-helper   # macOS only, for on-device
+herdr plugin unlink herdr-plugin-renamer || true
 herdr plugin link .
 herdr plugin log list --plugin herdr-plugin-renamer    # diagnostics
 herdr plugin unlink herdr-plugin-renamer

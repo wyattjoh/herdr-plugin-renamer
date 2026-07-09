@@ -171,6 +171,8 @@ cargo test foundation -- --ignored   # live on-device helper check (needs the
                                       # Swift build + Apple Intelligence)
 cargo build --release      # produces target/release/herdr-plugin-renamer
 cargo fmt                  # format
+just build                 # build local Rust and macOS Swift artifacts
+just link                  # run build, replace the local herdr link
 
 # On-device naming helper (built by the second [[build]] step on install):
 swift build -c release --package-path naming-helper   # -> naming-helper/.build/release/herdr-namer
