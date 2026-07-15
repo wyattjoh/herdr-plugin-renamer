@@ -1,7 +1,7 @@
 //! herdr-plugin-renamer
 //!
-//! A herdr event hook (`pane.agent_status_changed`) that renames a numeric tab
-//! from the agent's first prompt, and also renames an auto-generated worktree
+//! A herdr event hook (`pane.agent_status_changed`) that names a pane from the
+//! agent's first prompt, and also renames an auto-generated worktree
 //! branch/workspace when the pane is in a linked worktree.
 //!
 //! The binary runs in two phases:
@@ -10,7 +10,7 @@
 //!     phase detached and exits.
 //!   - COLD (`HERDR_NAMING_PHASE=cold`): does the slow work (poll for the
 //!     session, read the first prompt, generate a slug via the engine chain,
-//!     rename a numeric tab, and maybe rename branch + workspace).
+//!     rename the pane, and maybe rename branch + workspace).
 //!
 //! Every path exits 0 (fail open) so the hook never wedges herdr.
 
@@ -59,23 +59,22 @@ fn hot_phase() {
         Some(eligible) => eligible,
         None => return,
     };
-    let tab_id = env::var("HERDR_TAB_ID").unwrap_or_else(|_| eligible.pane_id.clone());
-    let marker_key = marker_key_for_tab(&tab_id);
+    let marker_key = marker_key_for_pane(&eligible.pane_id);
 
     let state_dir = state_dir();
     let done_marker = done_marker_path(&state_dir, &marker_key);
     if Path::new(&done_marker).exists() {
         debug_log(&format!(
-            "hot: done marker exists, bail tab={tab_id} ws={}",
-            eligible.workspace_id
+            "hot: done marker exists, bail pane={} ws={}",
+            eligible.pane_id, eligible.workspace_id
         ));
         return;
     }
     let claim_marker = claim_marker_path(&state_dir, &marker_key);
     if claim_is_fresh(&claim_marker) {
         debug_log(&format!(
-            "hot: claim fresh, bail tab={tab_id} ws={}",
-            eligible.workspace_id
+            "hot: claim fresh, bail pane={} ws={}",
+            eligible.pane_id, eligible.workspace_id
         ));
         return;
     }
@@ -84,22 +83,20 @@ fn hot_phase() {
     let _ = std::fs::write(&claim_marker, now_secs().to_string());
 
     debug_log(&format!(
-        "hot: eligible ws={} tab={} pane={} label={:?} linked={} -> fork cold",
+        "hot: eligible ws={} pane={} label={:?} linked={} -> fork cold",
         eligible.workspace_id,
-        tab_id,
         eligible.pane_id,
         eligible.workspace_label,
         eligible.is_linked_worktree
     ));
-    spawn_cold_phase(&eligible, &tab_id, &marker_key);
+    spawn_cold_phase(&eligible, &marker_key);
 }
 
 /// The slow path, run detached so herdr is never blocked.
 fn cold_phase() {
     let pane_id = env::var("HN_PANE_ID").unwrap_or_default();
-    let tab_id = env::var("HN_TAB_ID").unwrap_or_default();
     let workspace_id = env::var("HN_WORKSPACE_ID").unwrap_or_default();
-    let marker_key = env::var("HN_MARKER_KEY").unwrap_or_else(|_| marker_key_for_tab(&tab_id));
+    let marker_key = env::var("HN_MARKER_KEY").unwrap_or_else(|_| marker_key_for_pane(&pane_id));
     let checkout_path = env::var("HN_CHECKOUT_PATH")
         .ok()
         .filter(|path| !path.is_empty());
@@ -107,9 +104,7 @@ fn cold_phase() {
     let state_dir = state_dir();
     let claim_marker = claim_marker_path(&state_dir, &marker_key);
     let done_marker = done_marker_path(&state_dir, &marker_key);
-    debug_log(&format!(
-        "cold: start ws={workspace_id} tab={tab_id} pane={pane_id}"
-    ));
+    debug_log(&format!("cold: start ws={workspace_id} pane={pane_id}"));
 
     // Resolve the native session (with the timing-race poll), then the prompt.
     // On a transient miss, drop the claim so a later event retries.
@@ -152,16 +147,8 @@ fn cold_phase() {
         slug
     });
 
-    match herdr::tab_label(&tab_id) {
-        Some(label) if is_numeric_label(&label) => {
-            let ok = herdr::tab_rename(&tab_id, &slug);
-            debug_log(&format!("cold: tab {tab_id} {label} -> {slug} ok={ok}"));
-        }
-        Some(label) => debug_log(&format!("cold: skip tab rename, label={label:?}")),
-        None => debug_log(&format!(
-            "cold: skip tab rename, label unavailable tab={tab_id}"
-        )),
-    }
+    let ok = herdr::pane_rename(&pane_id, &slug);
+    debug_log(&format!("cold: pane {pane_id} -> {slug} ok={ok}"));
 
     // Safety re-check: only rename a branch still on the auto `worktree/` name.
     // Only after a successful branch rename do we rename the workspace.
@@ -263,7 +250,7 @@ fn poll_first_prompt(agent: &str, session_id: &str) -> Option<String> {
 
 /// Re-exec ourselves in the cold phase, detached into a new session so it
 /// survives the hot process exiting and any herdr process-group cleanup.
-fn spawn_cold_phase(eligible: &context::Eligible, tab_id: &str, marker_key: &str) {
+fn spawn_cold_phase(eligible: &context::Eligible, marker_key: &str) {
     let exe = match env::current_exe() {
         Ok(exe) => exe,
         Err(_) => return,
@@ -273,7 +260,6 @@ fn spawn_cold_phase(eligible: &context::Eligible, tab_id: &str, marker_key: &str
     command
         .env("HERDR_NAMING_PHASE", "cold")
         .env("HN_PANE_ID", &eligible.pane_id)
-        .env("HN_TAB_ID", tab_id)
         .env("HN_WORKSPACE_ID", &eligible.workspace_id)
         .env(
             "HN_WORKSPACE_LABEL",
@@ -308,8 +294,8 @@ fn state_dir() -> String {
     env::var("HERDR_PLUGIN_STATE_DIR").unwrap_or_else(|_| "/tmp".to_string())
 }
 
-fn marker_key_for_tab(tab_id: &str) -> String {
-    let safe = tab_id
+fn marker_key_for_pane(pane_id: &str) -> String {
+    let safe = pane_id
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' {
@@ -319,7 +305,7 @@ fn marker_key_for_tab(tab_id: &str) -> String {
             }
         })
         .collect::<String>();
-    format!("tab-{safe}")
+    format!("pane-{safe}")
 }
 
 fn claim_marker_path(state_dir: &str, marker_key: &str) -> String {
@@ -328,11 +314,6 @@ fn claim_marker_path(state_dir: &str, marker_key: &str) -> String {
 
 fn done_marker_path(state_dir: &str, marker_key: &str) -> String {
     format!("{state_dir}/{marker_key}.done")
-}
-
-fn is_numeric_label(label: &str) -> bool {
-    let label = label.trim();
-    !label.is_empty() && label.chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// True when a claim marker exists and is younger than `CLAIM_TTL`.
@@ -384,7 +365,7 @@ fn debug_log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_branch, is_numeric_label, marker_key_for_tab};
+    use super::{compose_branch, marker_key_for_pane};
 
     #[test]
     fn no_prefix_is_bare_slug() {
@@ -421,17 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn numeric_label_requires_digits() {
-        assert!(is_numeric_label("1"));
-        assert!(is_numeric_label("42"));
-        assert!(is_numeric_label(" 7 "));
-        assert!(!is_numeric_label(""));
-        assert!(!is_numeric_label("tab-1"));
-        assert!(!is_numeric_label("renamer-test"));
-    }
-
-    #[test]
-    fn marker_key_is_safe_for_tab_ids() {
-        assert_eq!(marker_key_for_tab("w5V:t1"), "tab-w5V_t1");
+    fn marker_key_is_safe_for_pane_ids() {
+        assert_eq!(marker_key_for_pane("w5V:p1"), "pane-w5V_p1");
     }
 }

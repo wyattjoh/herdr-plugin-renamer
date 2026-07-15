@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-herdr plugin (Rust) that renames a numeric herdr tab from the coding agent's
+herdr plugin (Rust) that names a herdr pane from the coding agent's
 first prompt. When the pane is in an auto-generated linked worktree, it also
 renames the worktree branch and workspace. The naming engine is swappable:
 on-device Apple FoundationModels by default (a small Swift helper), with a
@@ -12,18 +12,17 @@ Single binary, two phases (`src/main.rs`):
 
 - **Hot phase** (default, every `pane.agent_status_changed` event): pure env-var
   reads, no I/O. `context::evaluate` bails unless the new status is `working` and
-  this tab does not already have a done marker. On a pass, writes a tab-scoped
+  this pane does not already have a done marker. On a pass, writes a pane-scoped
   claim marker and forks the cold phase detached (`setsid`).
 - **Cold phase** (`HERDR_NAMING_PHASE=cold`): `herdr::poll_agent_session` →
   `transcript::read_first_prompt` → `main::generate_slug` (walks the
   `engine::engine_chain`; fallback `slug::fallback_from_prompt`) →
-  `herdr::tab_rename` when the current tab label is numeric. If the pane is in a
+  `herdr::pane_rename`. If the pane is in a
   linked worktree whose current branch starts with `worktree/`,
   `git::rename_current_branch` renames it to `<prefix>/<slug>` and only then
   `herdr::workspace_rename` renames the workspace to `<slug>`.
 
-Naming outputs: tab `<slug>` when the current tab label is just digits; branch
-`<prefix>/<slug>` (bare `<slug>` when no prefix is configured;
+Naming outputs: pane `<slug>`; branch `<prefix>/<slug>` (bare `<slug>` when no prefix is configured;
 `main::compose_branch` joins them); workspace `<slug>` after a successful
 worktree branch rename. The prefix comes from `main::resolve_branch_prefix`:
 `HERDR_NAMING_BRANCH_PREFIX` env, then a `branch-prefix` file in
@@ -72,7 +71,7 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
 - `codex.rs` — `codex exec --ignore-user-config --ephemeral -s read-only` with a 30s timeout
-- `herdr.rs` — `herdr pane get` (polled), `herdr tab get/rename`, and
+- `herdr.rs` — `herdr pane get` (polled), `herdr pane rename`, and
   `herdr workspace rename`
 - `git.rs` — current branch + `git branch -m`
 - `naming-helper/` — SwiftPM package (`herdr-namer`): two FoundationModels
@@ -86,8 +85,8 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 ## Conventions
 
 - Fail open: every path exits 0; never block herdr.
-- First-prompt idempotence is tab-scoped: a fresh claim marker blocks duplicate
-  cold phases, and a done marker blocks later events for the same tab.
+- First-prompt idempotence is pane-scoped: a fresh claim marker blocks duplicate
+  cold phases, and a done marker blocks later events for the same pane.
 - The cold phase polls for BOTH the session and the first prompt. Claude reports
   its session at SessionStart (before the prompt) and stays `working` with no new
   event, so a single transcript read can miss the prompt and never retry. Polling
@@ -96,7 +95,7 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   wrapper (`command-message`/`command-name` plus `command-args`) for naming, but
   never the expanded skill payload (`isMeta:true`) because it is framework text,
   not user intent.
-- Claim marker keyed on tab id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
+- Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
   A separate done marker is written after cold-phase completion.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
@@ -150,8 +149,7 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - Branch/workspace renaming uses a git safety re-check, not workspace label
   inference: only linked worktrees whose current branch starts with `worktree/`
   are renamed, and workspace rename runs only after branch rename succeeds.
-- Numeric tabs are detected with `herdr tab get`; only labels containing digits
-  after trimming are renamed.
+- Panes are renamed with `herdr pane rename`.
 - `agent_session` agent label is `claude` or `codex`; transcripts:
   Claude `~/.claude/projects/**/<uuid>.jsonl`, Codex
   `~/.codex/sessions/**/rollout-*<uuid>.jsonl`.

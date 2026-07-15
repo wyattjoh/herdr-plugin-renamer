@@ -204,7 +204,7 @@ struct HerdrNamer {
         }
 
         let generatorInstructions = """
-        You name software tasks for tabs, workspaces, and git branches.
+        You name software tasks for panes, workspaces, and git branches.
         Produce compact noun-topic label candidates, not literal restatements.
 
         Ground the label in the user's actual prompt. Prefer nouns and domain
@@ -221,7 +221,7 @@ struct HerdrNamer {
         prompt specifically asks for a log file.
         Avoid prepositions in the label.
         Do not introduce absent concepts, feature names, protocols, or examples.
-        Keep labels short enough to scan in a tab bar.
+        Keep labels short enough to scan as pane labels.
         Favor the user's goal over implementation details. If a prompt mentions
         both a mechanism and a desired user-visible outcome, name the outcome
         unless the mechanism is the actual task topic.
@@ -252,7 +252,7 @@ struct HerdrNamer {
             }
 
             let judgeInstructions = """
-            You select the best software task name for a tab, workspace, and git
+            You select the best software task name for a pane, workspace, and git
             branch. Choose exactly one candidate from the provided list.
 
             Selection criteria, in order:
@@ -263,7 +263,7 @@ struct HerdrNamer {
             5. Avoids overly literal command summaries and implementation-only
                details unless they are the main subject of the prompt.
             6. Avoids numbered variants or padded alternatives.
-            7. Short enough to scan in a tab bar.
+            7. Short enough to scan as a pane label.
 
             For "selected file to current" prompts, choose current-file over
             file-to-current because the resulting state is the meaningful topic.
