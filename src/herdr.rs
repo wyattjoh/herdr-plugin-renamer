@@ -69,29 +69,10 @@ pub fn workspace_rename(workspace_id: &str, label: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `herdr tab get <tab_id>` returns JSON by default. Extract the current tab
-/// label so the caller can decide whether it is still the default numeric name.
-pub fn tab_label(tab_id: &str) -> Option<String> {
-    let output = Command::new(herdr_bin())
-        .args(["tab", "get", tab_id])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    value
-        .pointer("/result/tab/label")
-        .or_else(|| value.pointer("/tab/label"))
-        .or_else(|| value.get("label"))
-        .and_then(|label| label.as_str())
-        .map(|label| label.to_string())
-}
-
-/// `herdr tab rename <tab_id> <label>`.
-pub fn tab_rename(tab_id: &str, label: &str) -> bool {
+/// `herdr pane rename <pane_id> <label>`.
+pub fn pane_rename(pane_id: &str, label: &str) -> bool {
     Command::new(herdr_bin())
-        .args(["tab", "rename", tab_id, label])
+        .args(["pane", "rename", pane_id, label])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

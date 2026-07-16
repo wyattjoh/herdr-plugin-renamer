@@ -36,7 +36,7 @@ struct Worktree {
 }
 
 /// A pane that passed the cheap eligibility gate: an agent just transitioned to
-/// `working`. Worktree details are optional because tab renaming also applies
+/// `working`. Worktree details are optional because pane renaming also applies
 /// to main checkouts.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Eligible {
@@ -50,9 +50,8 @@ pub struct Eligible {
 /// The fast bail. Returns `Some(Eligible)` only when:
 ///  - the new agent status is `working`.
 ///
-/// The cold path decides which side effects are allowed: tab rename for numeric
-/// tabs, and branch/workspace rename only for linked worktrees still on an auto
-/// `worktree/` branch.
+/// The cold path renames the pane, and renames the branch/workspace only for
+/// linked worktrees still on an auto `worktree/` branch.
 pub fn evaluate(event_json: &str, context_json: &str) -> Option<Eligible> {
     let event: EventEnvelope = serde_json::from_str(event_json).ok()?;
     if event.data.agent_status != "working" {
@@ -110,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn working_without_worktree_is_eligible_for_tab_rename() {
+    fn working_without_worktree_is_eligible_for_pane_rename() {
         let ctx = r#"{"workspace_id":"w4B","workspace_label":"main-checkout"}"#;
         let e = evaluate(&event("working"), ctx).expect("eligible");
         assert_eq!(e.pane_id, "w4B:p1");
@@ -118,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn already_renamed_workspace_is_still_eligible_for_tab_rename() {
+    fn already_renamed_workspace_is_still_eligible_for_pane_rename() {
         let ctx = r#"{
             "workspace_id":"w4B",
             "workspace_label":"oauth-login",

@@ -1,12 +1,12 @@
 # herdr-plugin-renamer
 
-A [herdr](https://herdr.dev) plugin that renames numeric tabs from a coding
-agent's first prompt. When that prompt happens in an auto-generated linked
+A [herdr](https://herdr.dev) plugin that names panes from a coding agent's
+first prompt. When that prompt happens in an auto-generated linked
 worktree, it also renames the git branch and workspace.
 
-When you start an agent in a numbered herdr tab like `1`, this plugin watches
-for the agent's first real prompt, asks a language model to name the task topic
-as a compact noun-topic kebab-case slug, then renames the tab to that slug.
+When you start an agent in a herdr pane, this plugin watches for the agent's
+first real prompt, asks a language model to name the task topic as a compact
+noun-topic kebab-case slug, then renames the pane to that slug.
 
 If the pane is also in a herdr linked worktree with a branch like
 `worktree/silver-field-3fd7`, the plugin additionally renames:
@@ -51,16 +51,16 @@ The plugin is a single Rust binary invoked on `pane.agent_status_changed`. That
 event fires constantly, so the binary is built around a near-zero-cost bail:
 
 1. **Hot path** (every event, env vars only, no subprocess/socket): proceed only
-   if the new status is `working` and this tab has not already been processed.
-   A tab-scoped claim marker prevents duplicate cold phases while the first one
+   if the new status is `working` and this pane has not already been processed.
+   A pane-scoped claim marker prevents duplicate cold phases while the first one
    is still running.
 2. **Cold path** (forked, detached): poll `herdr pane get` for the native
    session id (handling the documented status/session timing race), resolve and
    parse the transcript for the first genuine user prompt, generate the slug via
-   the engine chain, rename the tab if its current label is numeric, then maybe
+   the engine chain, rename the pane, then maybe
    rename the branch and workspace.
 
-A permanent tab-scoped done marker in the plugin state dir enforces the "first
+A permanent pane-scoped done marker in the plugin state dir enforces the "first
 prompt" rule. Transient misses remove the claim marker so a later event can
 retry.
 
@@ -148,7 +148,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full test/lint loop.
 
 ## Behavior notes
 
-- Numeric tab labels are renamed from the first prompt in any checkout.
+- Panes are renamed from the first prompt in any checkout.
 - Branch/workspace renaming only runs in linked worktrees whose current branch
   still starts with `worktree/`.
 - Workspace renaming only runs after the branch rename succeeds.
