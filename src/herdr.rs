@@ -6,6 +6,8 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
+const METADATA_SOURCE: &str = "plugin:herdr-plugin-renamer";
+
 fn herdr_bin() -> String {
     env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "herdr".to_string())
 }
@@ -73,6 +75,33 @@ pub fn workspace_rename(workspace_id: &str, label: &str) -> bool {
 pub fn pane_rename(pane_id: &str, label: &str) -> bool {
     Command::new(herdr_bin())
         .args(["pane", "rename", pane_id, label])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Publish the generated task name for custom Agent sidebar rows via `$task`.
+pub fn pane_report_task(pane_id: &str, task: &str) -> bool {
+    report_task_metadata("pane", pane_id, task)
+}
+
+/// Publish the generated task name for custom Space sidebar rows via `$task`.
+pub fn workspace_report_task(workspace_id: &str, task: &str) -> bool {
+    report_task_metadata("workspace", workspace_id, task)
+}
+
+fn report_task_metadata(resource: &str, resource_id: &str, task: &str) -> bool {
+    let token = format!("task={task}");
+    Command::new(herdr_bin())
+        .args([
+            resource,
+            "report-metadata",
+            resource_id,
+            "--source",
+            METADATA_SOURCE,
+            "--token",
+            &token,
+        ])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

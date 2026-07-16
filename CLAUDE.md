@@ -17,7 +17,9 @@ Single binary, two phases (`src/main.rs`):
 - **Cold phase** (`HERDR_NAMING_PHASE=cold`): `herdr::poll_agent_session` →
   `transcript::read_first_prompt` → `main::generate_slug` (walks the
   `engine::engine_chain`; fallback `slug::fallback_from_prompt`) →
-  `herdr::pane_rename`. If the pane is in a
+  `herdr::pane_rename`. The generated slug is also reported as the `task`
+  metadata token on the pane and workspace for custom Agent and Space sidebar
+  rows. If the pane is in a
   linked worktree whose current branch starts with `worktree/`,
   `git::rename_current_branch` renames it to `<prefix>/<slug>` and only then
   `herdr::workspace_rename` renames the workspace to `<slug>`.
@@ -71,8 +73,8 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
 - `codex.rs` — `codex exec --ignore-user-config --ephemeral -s read-only` with a 30s timeout
-- `herdr.rs` — `herdr pane get` (polled), `herdr pane rename`, and
-  `herdr workspace rename`
+- `herdr.rs`: `herdr pane get` (polled), pane/workspace task metadata, and
+  pane/workspace renames
 - `git.rs` — current branch + `git branch -m`
 - `naming-helper/` — SwiftPM package (`herdr-namer`): two FoundationModels
   guided-generation calls. The first fills a `@Generable TaskNameCandidates`
@@ -101,7 +103,12 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
   integration-tested via `herdr plugin link` + `herdr plugin log list`.
 
-## Key facts (verified against herdr 0.7.1, codex-cli 0.142.4, macOS 26.5)
+## Key facts (verified against herdr 0.7.4, codex-cli 0.142.4, macOS 26.5)
+
+- The generated slug is published as a `task` metadata token on both the pane
+  and workspace. Users can render it as `$task` in configurable Agent and Space
+  sidebar rows. Metadata reporting is display-only and fail-open; it does not
+  gate the persistent rename workflow.
 
 - FoundationModels runs from a plain SwiftPM CLI: no app bundle, Info.plist,
   entitlement, or signing needed to invoke `LanguageModelSession` locally. The

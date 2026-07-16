@@ -150,6 +150,15 @@ fn cold_phase() {
     let ok = herdr::pane_rename(&pane_id, &slug);
     debug_log(&format!("cold: pane {pane_id} -> {slug} ok={ok}"));
 
+    // Publish the same task name as display metadata so users can place `$task`
+    // in custom Agent and Space sidebar rows. Metadata failures do not affect
+    // the persistent pane, branch, or workspace renames.
+    let pane_metadata_ok = herdr::pane_report_task(&pane_id, &slug);
+    let workspace_metadata_ok = herdr::workspace_report_task(&workspace_id, &slug);
+    debug_log(&format!(
+        "cold: task metadata pane={pane_metadata_ok} workspace={workspace_metadata_ok}"
+    ));
+
     // Safety re-check: only rename a branch still on the auto `worktree/` name.
     // Only after a successful branch rename do we rename the workspace.
     if is_linked_worktree {
