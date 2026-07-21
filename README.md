@@ -36,7 +36,7 @@ when the branch was created or previously renamed by this plugin.
 The same Herdr action can be invoked directly:
 
 ```sh
-herdr plugin action invoke rename-current --plugin herdr-plugin-renamer
+herdr plugin action invoke rename-current
 ```
 
 ## Requirements

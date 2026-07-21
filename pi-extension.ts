@@ -76,7 +76,7 @@ export default function (pi: ExtensionAPI): void {
       try {
         const invoked = await pi.exec(
           herdr,
-          ["plugin", "action", "invoke", ACTION_ID, "--plugin", PLUGIN_ID],
+          ["plugin", "action", "invoke", ACTION_ID],
           { timeout: 5000 },
         )
         if (invoked.code !== 0) {
