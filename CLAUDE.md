@@ -65,10 +65,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
   (OS-aware: Foundation only on macOS)
-- `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
-  `claude` and `codex` (different on-disk formats). Claude slash-command
-  wrappers are used as a fallback naming prompt, including `command-args`, when
-  no normal non-meta user prompt exists; expanded skill bodies remain ignored.
+- `transcript.rs` — resolve transcript path (glob for Claude/Codex; reported
+  session path for Pi) + first-prompt extraction. Claude slash-command wrappers
+  are used as a fallback naming prompt, including `command-args`, when no normal
+  non-meta user prompt exists; expanded skill bodies remain ignored.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
@@ -157,9 +157,9 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   inference: only linked worktrees whose current branch starts with `worktree/`
   are renamed, and workspace rename runs only after branch rename succeeds.
 - Panes are renamed with `herdr pane rename`.
-- `agent_session` agent label is `claude` or `codex`; transcripts:
+- `agent_session` agent label is `claude`, `codex`, or `pi`; transcripts:
   Claude `~/.claude/projects/**/<uuid>.jsonl`, Codex
-  `~/.codex/sessions/**/rollout-*<uuid>.jsonl`.
+  `~/.codex/sessions/**/rollout-*<uuid>.jsonl`, Pi's reported session path.
 - `--ignore-user-config` on the Codex call disables the user's Codex hooks
   (avoids recursion and nondeterminism); auth still resolves from `CODEX_HOME`.
 - Naming model is `gpt-5.5` + `model_reasoning_effort=low` (~2.5s). That is the

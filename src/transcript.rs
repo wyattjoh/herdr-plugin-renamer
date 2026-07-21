@@ -1,5 +1,5 @@
-//! Resolving an agent transcript from a native session id and extracting the
-//! first genuine user prompt. Supports Claude Code and Codex, which use
+//! Resolving an agent transcript from a native session id or Pi-reported path and extracting the
+//! first genuine user prompt. Supports Claude Code, Codex, and Pi, which use
 //! different on-disk formats.
 
 use std::env;
@@ -12,9 +12,17 @@ pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
     first_prompt(agent, &contents)
 }
 
-/// Glob the agent's transcript directory for the session's `.jsonl` file.
+/// Resolve the agent's `.jsonl` file; Pi reports its path directly.
 fn resolve_path(agent: &str, session_id: &str) -> Option<PathBuf> {
-    let home = env::var("HOME").ok()?;
+    let home = env::var("HOME").ok();
+    resolve_path_with_home(agent, session_id, home.as_deref())
+}
+
+fn resolve_path_with_home(agent: &str, session_id: &str, home: Option<&str>) -> Option<PathBuf> {
+    if agent == "pi" {
+        return Some(PathBuf::from(session_id));
+    }
+    let home = home?;
     let pattern = match agent {
         "claude" => {
             let base = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| format!("{home}/.claude"));
@@ -34,6 +42,7 @@ pub fn first_prompt(agent: &str, contents: &str) -> Option<String> {
     match agent {
         "claude" => first_prompt_claude(contents),
         "codex" => first_prompt_codex(contents),
+        "pi" => first_prompt_pi(contents),
         _ => None,
     }
 }
@@ -227,6 +236,31 @@ fn is_codex_preamble(text: &str) -> bool {
         || text.starts_with("<environment_context>")
 }
 
+/// Pi JSONL: the first user `message` entry with text content. Session and
+/// model-change records have no `message.role` and are skipped.
+fn first_prompt_pi(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let value: serde_json::Value = match serde_json::from_str(line.trim()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(|t| t.as_str()) != Some("message")
+            || value.pointer("/message/role").and_then(|r| r.as_str()) != Some("user")
+        {
+            continue;
+        }
+        let text = value
+            .pointer("/message/content")
+            .map(extract_claude_text)
+            .unwrap_or_default();
+        let text = text.trim();
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +413,30 @@ mod tests {
         assert_eq!(
             first_prompt("codex", jsonl).as_deref(),
             Some("Implement rate limiting on the API")
+        );
+    }
+
+    #[test]
+    fn pi_path_does_not_require_home() {
+        assert_eq!(
+            resolve_path_with_home("pi", "/tmp/pi-session.jsonl", None),
+            Some(PathBuf::from("/tmp/pi-session.jsonl"))
+        );
+    }
+
+    #[test]
+    fn pi_reads_first_user_text_message() {
+        let jsonl = concat!(
+            r#"{"type":"session","id":"session"}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Rename the worktree from my task"}]}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("pi", jsonl).as_deref(),
+            Some("Rename the worktree from my task")
         );
     }
 
