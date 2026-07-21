@@ -21,6 +21,13 @@ command = ["cargo", "build", "--release"]
 command = ["swift", "build", "-c", "release", "--package-path", "naming-helper"]
 platforms = ["macos"]
 
+[[actions]]
+id = "rename-current"
+title = "Rename current Pi task"
+description = "Generate a new name from the latest Pi prompt."
+contexts = ["pane"]
+command = ["target/release/herdr-plugin-renamer"]
+
 # Fires on EVERY agent status transition. The command bails in microseconds
 # (pure env-var reads) unless an agent just started working. There is no
 # manifest-level event filter in herdr 0.7.x.

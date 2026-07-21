@@ -8,7 +8,7 @@ headless Codex call as the automatic fallback.
 
 ## Architecture
 
-Single binary, two phases (`src/main.rs`):
+The Rust binary has three entry paths (`src/main.rs`):
 
 - **Hot phase** (default, every `pane.agent_status_changed` event): pure env-var
   reads, no I/O. `context::evaluate` bails unless the new status is `working` and
@@ -23,6 +23,9 @@ Single binary, two phases (`src/main.rs`):
   linked worktree whose current branch starts with `worktree/`,
   `git::rename_current_branch` renames it to `<prefix>/<slug>` and only then
   `herdr::workspace_rename` renames the workspace to `<slug>`.
+- **Action phase** (`rename-current`): reads the latest Pi prompt, reuses the same
+  naming/effect path, prints the slug for the Pi extension, and may re-rename a
+  branch only when a prior run recorded it as plugin-managed.
 
 Naming outputs: pane `<slug>`; branch `<prefix>/<slug>` (bare `<slug>` when no prefix is configured;
 `main::compose_branch` joins them); workspace `<slug>` after a successful
@@ -61,14 +64,14 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 
 ## Module map
 
-- `context.rs` — parse the two env JSON blobs, working-status eligibility gate
+- `context.rs` — parse event/action context and resolve the target pane/worktree
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
   (OS-aware: Foundation only on macOS)
 - `transcript.rs` — resolve transcript path (glob for Claude/Codex; reported
-  session path for Pi) + first-prompt extraction. Claude slash-command wrappers
-  are used as a fallback naming prompt, including `command-args`, when no normal
-  non-meta user prompt exists; expanded skill bodies remain ignored.
+  session path for Pi) + first/latest-prompt extraction. Claude slash-command
+  wrappers are used as a fallback naming prompt, including `command-args`, when
+  no normal non-meta user prompt exists; expanded skill bodies remain ignored.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
@@ -76,6 +79,8 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `herdr.rs`: `herdr pane get` (polled), pane/workspace task metadata, and
   pane/workspace renames
 - `git.rs` — current branch + `git branch -m`
+- `pi-extension.ts` — thin `/rename` command: invoke the Herdr action, wait for
+  its command log, then apply the returned slug to the Pi session
 - `naming-helper/` — SwiftPM package (`herdr-namer`): two FoundationModels
   guided-generation calls. The first fills a `@Generable TaskNameCandidates`
   with candidate slugs; the helper sanitizes and dedupes them. The second fills
@@ -86,9 +91,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 
 ## Conventions
 
-- Fail open: every path exits 0; never block herdr.
+- Event hooks fail open and never block Herdr; explicit actions exit non-zero so
+  `/rename` can report failures.
 - First-prompt idempotence is pane-scoped: a fresh claim marker blocks duplicate
-  cold phases, and a done marker blocks later events for the same pane.
+  cold phases, and a done marker blocks later events for the same pane. Manual
+  `/rename` intentionally bypasses those one-shot markers.
 - The cold phase polls for BOTH the session and the first prompt. Claude reports
   its session at SessionStart (before the prompt) and stays `working` with no new
   event, so a single transcript read can miss the prompt and never retry. Polling
@@ -99,7 +106,9 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   not user intent.
 - Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
-  A separate done marker is written after cold-phase completion.
+  A separate done marker is written after cold-phase completion. Successful
+  branch renames also record the exact managed branch, which is the guard for a
+  later manual branch rename.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
   integration-tested via `herdr plugin link` + `herdr plugin log list`.
 
