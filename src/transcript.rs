@@ -7,9 +7,22 @@ use std::path::PathBuf;
 
 /// Resolve the transcript file, read it, and return the first real user prompt.
 pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
-    let path = resolve_path(agent, session_id)?;
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents = read_transcript(agent, session_id)?;
     first_prompt(agent, &contents)
+}
+
+/// Read the latest real Pi prompt for an explicit `/rename` request.
+pub fn read_latest_prompt(agent: &str, session_id: &str) -> Option<String> {
+    let contents = read_transcript(agent, session_id)?;
+    match agent {
+        "pi" => latest_prompt_pi(&contents),
+        _ => None,
+    }
+}
+
+fn read_transcript(agent: &str, session_id: &str) -> Option<String> {
+    let path = resolve_path(agent, session_id)?;
+    std::fs::read_to_string(path).ok()
 }
 
 /// Resolve the agent's `.jsonl` file; Pi reports its path directly.
@@ -239,26 +252,26 @@ fn is_codex_preamble(text: &str) -> bool {
 /// Pi JSONL: the first user `message` entry with text content. Session and
 /// model-change records have no `message.role` and are skipped.
 fn first_prompt_pi(contents: &str) -> Option<String> {
-    for line in contents.lines() {
-        let value: serde_json::Value = match serde_json::from_str(line.trim()) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if value.get("type").and_then(|t| t.as_str()) != Some("message")
-            || value.pointer("/message/role").and_then(|r| r.as_str()) != Some("user")
-        {
-            continue;
-        }
-        let text = value
-            .pointer("/message/content")
-            .map(extract_claude_text)
-            .unwrap_or_default();
-        let text = text.trim();
-        if !text.is_empty() {
-            return Some(text.to_string());
-        }
+    contents.lines().find_map(pi_prompt)
+}
+
+fn latest_prompt_pi(contents: &str) -> Option<String> {
+    contents.lines().filter_map(pi_prompt).next_back()
+}
+
+fn pi_prompt(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type").and_then(|t| t.as_str()) != Some("message")
+        || value.pointer("/message/role").and_then(|r| r.as_str()) != Some("user")
+    {
+        return None;
     }
-    None
+    let text = value
+        .pointer("/message/content")
+        .map(extract_claude_text)
+        .unwrap_or_default();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 #[cfg(test)]
@@ -425,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn pi_reads_first_user_text_message() {
+    fn pi_reads_first_and_latest_user_text_messages() {
         let jsonl = concat!(
             r#"{"type":"session","id":"session"}"#,
             "\n",
@@ -433,10 +446,16 @@ mod tests {
             "\n",
             r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Rename the worktree from my task"}]}}"#,
             "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Use the latest task instead"}]}}"#,
+            "\n",
         );
         assert_eq!(
             first_prompt("pi", jsonl).as_deref(),
             Some("Rename the worktree from my task")
+        );
+        assert_eq!(
+            latest_prompt_pi(jsonl).as_deref(),
+            Some("Use the latest task instead")
         );
     }
 

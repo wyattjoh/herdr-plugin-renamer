@@ -21,6 +21,24 @@ herdr integration install codex
 herdr integration install pi
 ```
 
+To add the Pi `/rename` command:
+
+```sh
+pi install git:github.com/wyattjoh/herdr-plugin-renamer
+```
+
+## Manual rename
+
+Run `/rename` in Pi to generate a new name from the latest user prompt. It
+updates the Pi session and Herdr pane, and also updates the workspace and branch
+when the branch was created or previously renamed by this plugin.
+
+The same Herdr action can be invoked directly:
+
+```sh
+herdr plugin action invoke rename-current --plugin herdr-plugin-renamer
+```
+
 ## Requirements
 
 - herdr 0.7.4+ on macOS or Linux
@@ -39,8 +57,10 @@ auto-generated linked worktree, the plugin can also rename:
 - branch: `<prefix>/cache-review`, or `cache-review` without a prefix
 - workspace: `cache-review`
 
-Branch and workspace renaming only happens when the current branch starts with
-`worktree/`. The branch rename is local and never pushes to the remote.
+Automatic branch and workspace renaming only happens when the current branch
+starts with `worktree/`. Manual `/rename` can rename that branch again after the
+plugin has recorded it as managed. Branch renames are local and never push to
+the remote.
 
 The generated name is also published as a `task` metadata token on the pane and
 workspace. This makes `$task` available to custom Agent and Space sidebar rows.

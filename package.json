@@ -1,0 +1,11 @@
+{
+  "name": "@filipores/herdr-plugin-renamer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./pi-extension.ts"
+    ]
+  }
+}

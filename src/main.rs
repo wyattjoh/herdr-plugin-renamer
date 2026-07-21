@@ -4,15 +4,12 @@
 //! agent's first prompt, and also renames an auto-generated worktree
 //! branch/workspace when the pane is in a linked worktree.
 //!
-//! The binary runs in two phases:
-//!   - HOT  (default): fires on every event. Bails in microseconds from env
-//!     vars alone unless an agent just started working, then forks the cold
-//!     phase detached and exits.
-//!   - COLD (`HERDR_NAMING_PHASE=cold`): does the slow work (poll for the
-//!     session, read the first prompt, generate a slug via the engine chain,
-//!     rename the pane, and maybe rename branch + workspace).
+//! The binary has three entry paths:
+//!   - HOT events bail quickly unless an agent just started working.
+//!   - COLD events name from the first prompt in a detached process.
+//!   - ACTION requests name from the latest Pi prompt.
 //!
-//! Every path exits 0 (fail open) so the hook never wedges herdr.
+//! Event paths fail open so the hook never wedges herdr; explicit actions report failure.
 
 mod codex;
 mod context;
@@ -40,7 +37,11 @@ const PROMPT_POLL_ATTEMPTS: u32 = 20;
 const PROMPT_POLL_DELAY: Duration = Duration::from_millis(750);
 
 fn main() {
-    if env::var("HERDR_NAMING_PHASE").as_deref() == Ok("cold") {
+    if env::var("HERDR_PLUGIN_ACTION_ID").as_deref() == Ok("rename-current") {
+        if !action_phase() {
+            std::process::exit(1);
+        }
+    } else if env::var("HERDR_NAMING_PHASE").as_deref() == Ok("cold") {
         cold_phase();
     } else {
         hot_phase();
@@ -92,6 +93,44 @@ fn hot_phase() {
     spawn_cold_phase(&eligible, &marker_key);
 }
 
+/// Explicit `/rename` path. Uses the latest Pi prompt and bypasses one-shot markers.
+fn action_phase() -> bool {
+    let Some(pane_id) = env::var("HERDR_PANE_ID").ok().filter(|id| !id.is_empty()) else {
+        eprintln!("no focused Herdr pane");
+        return false;
+    };
+    let Some(workspace_id) = env::var("HERDR_WORKSPACE_ID")
+        .ok()
+        .filter(|id| !id.is_empty())
+    else {
+        eprintln!("no focused Herdr workspace");
+        return false;
+    };
+    let context_json = env::var("HERDR_PLUGIN_CONTEXT_JSON").unwrap_or_default();
+    let Some(target) = context::action_target(pane_id, workspace_id, &context_json) else {
+        eprintln!("invalid Herdr action context");
+        return false;
+    };
+    let Some((agent, session_id)) =
+        herdr::poll_agent_session(&target.pane_id, SESSION_POLL_ATTEMPTS, SESSION_POLL_DELAY)
+    else {
+        eprintln!("no agent session for focused pane");
+        return false;
+    };
+    let Some(prompt) = transcript::read_latest_prompt(&agent, &session_id) else {
+        eprintln!("no Pi prompt to rename from");
+        return false;
+    };
+    let marker_key = marker_key_for_pane(&target.pane_id);
+    let slug_file = format!("{}/{}.slug", state_dir(), marker_key);
+    let slug = name_prompt(&prompt, Path::new(&slug_file));
+    let renamed = apply_slug(&target, &marker_key, &slug, true);
+    if renamed {
+        println!("{slug}");
+    }
+    renamed
+}
+
 /// The slow path, run detached so herdr is never blocked.
 fn cold_phase() {
     let pane_id = env::var("HN_PANE_ID").unwrap_or_default();
@@ -106,7 +145,7 @@ fn cold_phase() {
     let done_marker = done_marker_path(&state_dir, &marker_key);
     debug_log(&format!("cold: start ws={workspace_id} pane={pane_id}"));
 
-    // Resolve the native session (with the timing-race poll), then the prompt.
+    // Resolve the agent session reference (with the timing-race poll), then the prompt.
     // On a transient miss, drop the claim so a later event retries.
     let (agent, session_id) =
         match herdr::poll_agent_session(&pane_id, SESSION_POLL_ATTEMPTS, SESSION_POLL_DELAY) {
@@ -138,60 +177,78 @@ fn cold_phase() {
         prompt.chars().take(80).collect::<String>()
     ));
 
-    // Name it: walk the engine chain (on-device first by default, Codex
-    // fallback), then a deterministic local slug if every engine fails.
     let slug_file = format!("{state_dir}/{marker_key}.slug");
-    let slug = generate_slug(&prompt, Path::new(&slug_file)).unwrap_or_else(|| {
-        let slug = slug::fallback_from_prompt(&prompt);
-        debug_log(&format!("cold: all engines failed, fallback slug={slug}"));
-        slug
-    });
-
-    let ok = herdr::pane_rename(&pane_id, &slug);
-    debug_log(&format!("cold: pane {pane_id} -> {slug} ok={ok}"));
-
-    // Publish the same task name as display metadata so users can place `$task`
-    // in custom Agent and Space sidebar rows. Metadata failures do not affect
-    // the persistent pane, branch, or workspace renames.
-    let pane_metadata_ok = herdr::pane_report_task(&pane_id, &slug);
-    let workspace_metadata_ok = herdr::workspace_report_task(&workspace_id, &slug);
-    debug_log(&format!(
-        "cold: task metadata pane={pane_metadata_ok} workspace={workspace_metadata_ok}"
-    ));
-
-    // Safety re-check: only rename a branch still on the auto `worktree/` name.
-    // Only after a successful branch rename do we rename the workspace.
-    if is_linked_worktree {
-        if let Some(checkout_path) = checkout_path.as_deref() {
-            match git::current_branch(checkout_path) {
-                Some(current) if current.starts_with("worktree/") => {
-                    let branch = compose_branch(resolve_branch_prefix().as_deref(), &slug);
-                    let branch_ok = git::rename_current_branch(checkout_path, &branch);
-                    debug_log(&format!(
-                        "cold: branch {current} -> {branch} ok={branch_ok}"
-                    ));
-                    if branch_ok {
-                        let ok = herdr::workspace_rename(&workspace_id, &slug);
-                        debug_log(&format!(
-                            "cold: workspace rename ws={workspace_id} -> {slug} ok={ok}"
-                        ));
-                    } else {
-                        debug_log("cold: skip workspace rename, branch rename failed");
-                    }
-                }
-                other => debug_log(&format!(
-                    "cold: skip branch/workspace rename, current={other:?}"
-                )),
-            }
-        } else {
-            debug_log("cold: skip branch/workspace rename, checkout path unavailable");
-        }
-    } else {
-        debug_log("cold: skip branch/workspace rename, not a linked worktree");
-    }
+    let slug = name_prompt(&prompt, Path::new(&slug_file));
+    let target = context::Eligible {
+        pane_id,
+        workspace_id,
+        workspace_label: None,
+        checkout_path,
+        is_linked_worktree,
+    };
+    apply_slug(&target, &marker_key, &slug, false);
 
     let _ = std::fs::remove_file(&claim_marker);
     let _ = std::fs::write(&done_marker, now_secs().to_string());
+}
+
+fn name_prompt(prompt: &str, slug_file: &Path) -> String {
+    generate_slug(prompt, slug_file).unwrap_or_else(|| {
+        let slug = slug::fallback_from_prompt(prompt);
+        debug_log(&format!("all engines failed, fallback slug={slug}"));
+        slug
+    })
+}
+
+fn apply_slug(target: &context::Eligible, marker_key: &str, slug: &str, manual: bool) -> bool {
+    let pane_ok = herdr::pane_rename(&target.pane_id, slug);
+    debug_log(&format!("pane {} -> {slug} ok={pane_ok}", target.pane_id));
+
+    let pane_metadata_ok = herdr::pane_report_task(&target.pane_id, slug);
+    let workspace_metadata_ok = herdr::workspace_report_task(&target.workspace_id, slug);
+    debug_log(&format!(
+        "task metadata pane={pane_metadata_ok} workspace={workspace_metadata_ok}"
+    ));
+
+    if !target.is_linked_worktree {
+        debug_log("skip branch/workspace rename, not a linked worktree");
+        return pane_ok;
+    }
+    let Some(checkout_path) = target.checkout_path.as_deref() else {
+        debug_log("skip branch/workspace rename, checkout path unavailable");
+        return pane_ok;
+    };
+    let Some(current) = git::current_branch(checkout_path) else {
+        debug_log("skip branch/workspace rename, current branch unavailable");
+        return pane_ok;
+    };
+    if !current.starts_with("worktree/") {
+        let managed = manual
+            && std::fs::read_to_string(managed_branch_path(&state_dir(), marker_key))
+                .ok()
+                .is_some_and(|branch| branch.trim() == current);
+        if !managed {
+            debug_log(&format!(
+                "skip branch/workspace rename, current branch is not plugin-managed: {current}"
+            ));
+            return pane_ok;
+        }
+    }
+
+    let branch = compose_branch(resolve_branch_prefix().as_deref(), slug);
+    let branch_ok = current == branch || git::rename_current_branch(checkout_path, &branch);
+    debug_log(&format!("branch {current} -> {branch} ok={branch_ok}"));
+    if !branch_ok {
+        return !manual && pane_ok;
+    }
+
+    let marker_ok = std::fs::write(managed_branch_path(&state_dir(), marker_key), &branch).is_ok();
+    let workspace_ok = herdr::workspace_rename(&target.workspace_id, slug);
+    debug_log(&format!(
+        "managed marker ok={marker_ok}; workspace rename ws={} -> {slug} ok={workspace_ok}",
+        target.workspace_id
+    ));
+    pane_ok && (!manual || marker_ok && workspace_ok)
 }
 
 /// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
@@ -323,6 +380,10 @@ fn claim_marker_path(state_dir: &str, marker_key: &str) -> String {
 
 fn done_marker_path(state_dir: &str, marker_key: &str) -> String {
     format!("{state_dir}/{marker_key}.done")
+}
+
+fn managed_branch_path(state_dir: &str, marker_key: &str) -> String {
+    format!("{state_dir}/{marker_key}.branch")
 }
 
 /// True when a claim marker exists and is younger than `CLAIM_TTL`.
