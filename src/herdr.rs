@@ -80,28 +80,42 @@ pub fn pane_rename(pane_id: &str, label: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Publish the generated task name for custom Agent sidebar rows via `$task`.
+/// Publish the generated task name for custom Agent sidebar rows via `$task`,
+/// and also set pane title / display-agent so the Herdr UI and outer title
+/// plugins can show the task without scraping session files.
 pub fn pane_report_task(pane_id: &str, task: &str) -> bool {
-    report_task_metadata("pane", pane_id, task)
+    report_task_metadata("pane", pane_id, task, true)
 }
 
 /// Publish the generated task name for custom Space sidebar rows via `$task`.
 pub fn workspace_report_task(workspace_id: &str, task: &str) -> bool {
-    report_task_metadata("workspace", workspace_id, task)
+    report_task_metadata("workspace", workspace_id, task, false)
 }
 
-fn report_task_metadata(resource: &str, resource_id: &str, task: &str) -> bool {
+fn report_task_metadata(resource: &str, resource_id: &str, task: &str, with_title: bool) -> bool {
     let token = format!("task={task}");
+    let mut args = vec![
+        resource.to_string(),
+        "report-metadata".to_string(),
+        resource_id.to_string(),
+        "--source".to_string(),
+        METADATA_SOURCE.to_string(),
+        "--token".to_string(),
+        token,
+    ];
+    // Pane metadata can carry a human title + display-agent. Workspace
+    // metadata only supports tokens for custom Space rows.
+    if with_title {
+        args.push("--title".to_string());
+        args.push(task.to_string());
+        args.push("--display-agent".to_string());
+        args.push(task.to_string());
+        // Keep the title sticky for the session; cold phase refreshes it.
+        args.push("--ttl-ms".to_string());
+        args.push("86400000".to_string());
+    }
     Command::new(herdr_bin())
-        .args([
-            resource,
-            "report-metadata",
-            resource_id,
-            "--source",
-            METADATA_SOURCE,
-            "--token",
-            &token,
-        ])
+        .args(&args)
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

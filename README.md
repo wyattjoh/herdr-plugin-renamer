@@ -41,9 +41,13 @@ auto-generated linked worktree, the plugin can also rename:
 Branch and workspace renaming only happens when the current branch starts with
 `worktree/`. The branch rename is local and never pushes to the remote.
 
-The generated name is also published as a `task` metadata token on the pane and
-workspace. This makes `$task` available to custom Agent and Space sidebar rows.
-For example:
+The generated name is also published as pane/workspace metadata:
+
+- pane: `--title`, `--display-agent`, and `$task` token
+- workspace: `$task` token
+
+That means the Herdr sidebar and outer title plugins can show the task without
+scraping session files. For custom Agent and Space sidebar rows:
 
 ```toml
 [ui.sidebar.agents]
