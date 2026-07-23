@@ -7,7 +7,7 @@
 //! The binary has three entry paths:
 //!   - HOT events bail quickly unless an agent just started working.
 //!   - COLD events name from the first prompt in a detached process.
-//!   - ACTION requests name from the latest Pi prompt.
+//!   - ACTION requests name from the first and recent Pi prompts.
 //!
 //! Event paths fail open so the hook never wedges herdr; explicit actions report failure.
 
@@ -93,7 +93,7 @@ fn hot_phase() {
     spawn_cold_phase(&eligible, &marker_key);
 }
 
-/// Explicit `/rename` path. Uses the latest Pi prompt and bypasses one-shot markers.
+/// Explicit `/rename` path. Uses the first and recent Pi prompts and bypasses one-shot markers.
 fn action_phase() -> bool {
     let Some(pane_id) = env::var("HERDR_PANE_ID").ok().filter(|id| !id.is_empty()) else {
         eprintln!("no focused Herdr pane");
@@ -117,13 +117,14 @@ fn action_phase() -> bool {
         eprintln!("no agent session for focused pane");
         return false;
     };
-    let Some(prompt) = transcript::read_latest_prompt(&agent, &session_id) else {
+    let Some((prompt, fallback_prompt)) = transcript::read_rename_prompt(&agent, &session_id)
+    else {
         eprintln!("no Pi prompt to rename from");
         return false;
     };
     let marker_key = marker_key_for_pane(&target.pane_id);
     let slug_file = format!("{}/{}.slug", state_dir(), marker_key);
-    let slug = name_prompt(&prompt, Path::new(&slug_file));
+    let slug = name_prompt(&prompt, &fallback_prompt, Path::new(&slug_file));
     let renamed = apply_slug(&target, &marker_key, &slug, true);
     if renamed {
         println!("{slug}");
@@ -178,7 +179,7 @@ fn cold_phase() {
     ));
 
     let slug_file = format!("{state_dir}/{marker_key}.slug");
-    let slug = name_prompt(&prompt, Path::new(&slug_file));
+    let slug = name_prompt(&prompt, &prompt, Path::new(&slug_file));
     let target = context::Eligible {
         pane_id,
         workspace_id,
@@ -192,9 +193,9 @@ fn cold_phase() {
     let _ = std::fs::write(&done_marker, now_secs().to_string());
 }
 
-fn name_prompt(prompt: &str, slug_file: &Path) -> String {
+fn name_prompt(prompt: &str, fallback_prompt: &str, slug_file: &Path) -> String {
     generate_slug(prompt, slug_file).unwrap_or_else(|| {
-        let slug = slug::fallback_from_prompt(prompt);
+        let slug = slug::fallback_from_prompt(fallback_prompt);
         debug_log(&format!("all engines failed, fallback slug={slug}"));
         slug
     })

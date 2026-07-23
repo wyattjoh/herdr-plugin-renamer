@@ -35,8 +35,9 @@ pi install git:github.com/wyattjoh/herdr-plugin-renamer
 
 ## Manual rename
 
-Run `/rename` in Pi to generate a new name from the latest user prompt. It
-updates the Pi session and Herdr pane, and also updates the workspace and branch
+Run `/rename` in Pi to generate a new name from the first user prompt plus up
+to three latest user prompts. It updates the Pi session and Herdr pane, and also
+updates the workspace and branch
 when the branch was created or previously renamed by this plugin.
 
 The same Herdr action can be invoked directly:
