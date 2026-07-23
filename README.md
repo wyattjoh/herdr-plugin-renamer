@@ -64,6 +64,9 @@ auto-generated linked worktree, the plugin can also rename:
 - branch: `<prefix>/cache-review`, or `cache-review` without a prefix
 - workspace: `cache-review`
 
+If the generated branch already exists, all names use the first free numeric
+suffix, such as `cache-review-2`.
+
 Automatic branch and workspace renaming only happens when the current branch
 starts with `worktree/`. Manual `/rename` can rename that branch again after the
 plugin has recorded it as managed. Branch renames are local and never push to

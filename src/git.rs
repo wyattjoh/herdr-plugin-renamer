@@ -1,5 +1,5 @@
 //! Minimal git interaction against the worktree checkout: read the current
-//! branch (for a safety re-check) and rename it.
+//! branch (for a safety re-check), inspect local refs, and rename it.
 
 use std::process::Command;
 
@@ -19,6 +19,21 @@ pub fn current_branch(checkout_path: &str) -> Option<String> {
         None
     } else {
         Some(branch)
+    }
+}
+
+/// Check whether a local branch ref already exists.
+pub fn branch_exists(checkout_path: &str, branch: &str) -> Option<bool> {
+    let reference = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .current_dir(checkout_path)
+        .args(["show-ref", "--verify", "--quiet", &reference])
+        .output()
+        .ok()?;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
     }
 }
 
