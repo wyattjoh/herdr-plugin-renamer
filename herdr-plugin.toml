@@ -24,7 +24,7 @@ platforms = ["macos"]
 [[actions]]
 id = "rename-current"
 title = "Rename current Pi task"
-description = "Generate a new name from the latest Pi prompt."
+description = "Generate a new name from the first and recent Pi prompts."
 contexts = ["pane"]
 command = ["target/release/herdr-plugin-renamer"]
 

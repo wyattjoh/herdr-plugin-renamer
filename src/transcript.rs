@@ -1,6 +1,5 @@
-//! Resolving an agent transcript from a native session id or Pi-reported path and extracting the
-//! first genuine user prompt. Supports Claude Code, Codex, and Pi, which use
-//! different on-disk formats.
+//! Resolving an agent transcript from a native session id or Pi-reported path and extracting
+//! genuine user prompts. Supports Claude Code, Codex, and Pi, which use different on-disk formats.
 
 use std::env;
 use std::path::PathBuf;
@@ -11,11 +10,11 @@ pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
     first_prompt(agent, &contents)
 }
 
-/// Read the latest real Pi prompt for an explicit `/rename` request.
-pub fn read_latest_prompt(agent: &str, session_id: &str) -> Option<String> {
+/// Build the explicit `/rename` model context and local fallback from real Pi prompts.
+pub fn read_rename_prompt(agent: &str, session_id: &str) -> Option<(String, String)> {
     let contents = read_transcript(agent, session_id)?;
     match agent {
-        "pi" => latest_prompt_pi(&contents),
+        "pi" => rename_prompt_pi(&contents),
         _ => None,
     }
 }
@@ -255,8 +254,23 @@ fn first_prompt_pi(contents: &str) -> Option<String> {
     contents.lines().find_map(pi_prompt)
 }
 
-fn latest_prompt_pi(contents: &str) -> Option<String> {
-    contents.lines().filter_map(pi_prompt).next_back()
+fn rename_prompt_pi(contents: &str) -> Option<(String, String)> {
+    let messages: Vec<_> = contents.lines().filter_map(pi_prompt).collect();
+    let first = messages.first()?;
+    let recent = messages
+        .iter()
+        .enumerate()
+        .skip(messages.len().saturating_sub(3))
+        .filter(|(index, _)| *index != 0)
+        .enumerate()
+        .map(|(index, (_, message))| format!("{}. {message}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recent = if recent.is_empty() { "none" } else { &recent };
+    let prompt = format!(
+        "## Naming context\n\nFirst user message:\n{first}\n\nRecent user messages:\n{recent}"
+    );
+    Some((prompt, messages.last()?.clone()))
 }
 
 fn pi_prompt(line: &str) -> Option<String> {
@@ -438,24 +452,39 @@ mod tests {
     }
 
     #[test]
-    fn pi_reads_first_and_latest_user_text_messages() {
+    fn pi_reads_first_prompt_and_builds_rename_context() {
         let jsonl = concat!(
             r#"{"type":"session","id":"session"}"#,
             "\n",
             r#"{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}]}}"#,
             "\n",
-            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Rename the worktree from my task"}]}}"#,
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"First task"}]}}"#,
             "\n",
-            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Use the latest task instead"}]}}"#,
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Second task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Third task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Fourth task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Latest task"}]}}"#,
             "\n",
         );
+        assert_eq!(first_prompt("pi", jsonl).as_deref(), Some("First task"));
         assert_eq!(
-            first_prompt("pi", jsonl).as_deref(),
-            Some("Rename the worktree from my task")
+            rename_prompt_pi(jsonl),
+            Some((
+                "## Naming context\n\nFirst user message:\nFirst task\n\nRecent user messages:\n1. Third task\n2. Fourth task\n3. Latest task".into(),
+                "Latest task".into(),
+            ))
         );
         assert_eq!(
-            latest_prompt_pi(jsonl).as_deref(),
-            Some("Use the latest task instead")
+            rename_prompt_pi(
+                r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Only task"}]}}"#
+            ),
+            Some((
+                "## Naming context\n\nFirst user message:\nOnly task\n\nRecent user messages:\nnone".into(),
+                "Only task".into(),
+            ))
         );
     }
 

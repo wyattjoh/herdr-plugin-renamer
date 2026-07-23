@@ -23,8 +23,8 @@ The Rust binary has three entry paths (`src/main.rs`):
   linked worktree whose current branch starts with `worktree/`,
   `git::rename_current_branch` renames it to `<prefix>/<slug>` and only then
   `herdr::workspace_rename` renames the workspace to `<slug>`.
-- **Action phase** (`rename-current`): reads the latest Pi prompt, reuses the same
-  naming/effect path, prints the slug for the Pi extension, and may re-rename a
+- **Action phase** (`rename-current`): reads the first and three latest Pi
+  prompts, reuses the same naming/effect path, prints the slug for the Pi extension, and may re-rename a
   branch only when a prior run recorded it as plugin-managed.
 
 Naming outputs: pane `<slug>`; branch `<prefix>/<slug>` (bare `<slug>` when no prefix is configured;
