@@ -3,8 +3,8 @@
 herdr plugin (Rust) that names a herdr pane from the coding agent's
 first prompt. When the pane is in an auto-generated linked worktree, it also
 renames the worktree branch and workspace. The naming engine is swappable:
-on-device Apple FoundationModels by default (a small Swift helper), with a
-headless Codex call as the automatic fallback.
+on-device Apple FoundationModels first on macOS, then a clean headless Pi call
+using Pi's existing authentication, with Codex as the final model fallback.
 
 ## Architecture
 
@@ -46,18 +46,20 @@ the cleaned list. Codex remains a fallback only when Foundation fails.
 `generate_slug` (in `main.rs`) walks an ordered chain from `engine::engine_chain`,
 selected by `HERDR_NAMING_ENGINE`, and uses the first engine that returns a slug:
 
-- unset / `foundation` / unknown → `[Foundation, Codex]` (on-device first)
-- `codex` → `[Codex]` only
+- unset / `foundation` / unknown → `[Foundation, Pi, Codex]` on macOS
+- unset / `foundation` / unknown → `[Pi, Codex]` on Linux
+- `pi` or `codex` → only that engine
 
-Each engine returns `Option<String>` and yields `None` on any failure, so the
-chain degrades cleanly: Foundation → Codex → deterministic local slug. Engine
-binaries are overridable via `HERDR_NAMING_FOUNDATION_BIN` and
+Each engine returns `Option<String>` and yields `None` on failure. Automatic
+naming may then use the deterministic local slug; explicit `/rename` instead
+reports that no authenticated naming model is available. Engine binaries are
+overridable via `HERDR_NAMING_FOUNDATION_BIN`, `HERDR_NAMING_PI_BIN`, and
 `HERDR_NAMING_CODEX_BIN`.
 
 **OS gate:** the `Foundation` engine is `#[cfg(target_os = "macos")]`. Off macOS
 (e.g. Linux) the enum variant, the `foundation` module, and the matching
-`[[build]]` swift step are all compiled/skipped, so the default chain collapses
-to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
+`[[build]]` swift step are all compiled/skipped, so the default chain becomes
+`[Pi, Codex]` and a `foundation` request is silently downgraded. The plugin's
 `platforms` are `["macos", "linux"]` (Unix only; the cold phase detaches via
 `setsid`). Verify the Linux build with
 `cargo check --target x86_64-unknown-linux-gnu`.
@@ -68,8 +70,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
   (OS-aware: Foundation only on macOS)
+- `pi.rs` — isolated headless Pi naming call with extensions, tools, context, and
+  session persistence disabled
+- `process.rs` — bounded child-process wait shared by Pi and Codex
 - `transcript.rs` — resolve transcript path (glob for Claude/Codex; reported
-  session path for Pi) + first/latest-prompt extraction. Claude slash-command
+  session path for Pi) + first/recent-prompt extraction. Claude slash-command
   wrappers are used as a fallback naming prompt, including `command-args`, when
   no normal non-meta user prompt exists; expanded skill bodies remain ignored.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
@@ -169,6 +174,8 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `agent_session` agent label is `claude`, `codex`, or `pi`; transcripts:
   Claude `~/.claude/projects/**/<uuid>.jsonl`, Codex
   `~/.codex/sessions/**/rollout-*<uuid>.jsonl`, Pi's reported session path.
+- The Pi call disables extensions, tools, skills, context files, and session
+  persistence to avoid recursion while reusing Pi's configured model and auth.
 - `--ignore-user-config` on the Codex call disables the user's Codex hooks
   (avoids recursion and nondeterminism); auth still resolves from `CODEX_HOME`.
 - Naming model is `gpt-5.5` + `model_reasoning_effort=low` (~2.5s). That is the

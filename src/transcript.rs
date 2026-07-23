@@ -10,8 +10,8 @@ pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
     first_prompt(agent, &contents)
 }
 
-/// Build the explicit `/rename` model context and local fallback from real Pi prompts.
-pub fn read_rename_prompt(agent: &str, session_id: &str) -> Option<(String, String)> {
+/// Build the explicit `/rename` model context from real Pi prompts.
+pub fn read_rename_prompt(agent: &str, session_id: &str) -> Option<String> {
     let contents = read_transcript(agent, session_id)?;
     match agent {
         "pi" => rename_prompt_pi(&contents),
@@ -254,7 +254,7 @@ fn first_prompt_pi(contents: &str) -> Option<String> {
     contents.lines().find_map(pi_prompt)
 }
 
-fn rename_prompt_pi(contents: &str) -> Option<(String, String)> {
+fn rename_prompt_pi(contents: &str) -> Option<String> {
     let messages: Vec<_> = contents.lines().filter_map(pi_prompt).collect();
     let first = messages.first()?;
     let recent = messages
@@ -267,10 +267,9 @@ fn rename_prompt_pi(contents: &str) -> Option<(String, String)> {
         .collect::<Vec<_>>()
         .join("\n");
     let recent = if recent.is_empty() { "none" } else { &recent };
-    let prompt = format!(
+    Some(format!(
         "## Naming context\n\nFirst user message:\n{first}\n\nRecent user messages:\n{recent}"
-    );
-    Some((prompt, messages.last()?.clone()))
+    ))
 }
 
 fn pi_prompt(line: &str) -> Option<String> {
@@ -472,19 +471,17 @@ mod tests {
         assert_eq!(first_prompt("pi", jsonl).as_deref(), Some("First task"));
         assert_eq!(
             rename_prompt_pi(jsonl),
-            Some((
-                "## Naming context\n\nFirst user message:\nFirst task\n\nRecent user messages:\n1. Third task\n2. Fourth task\n3. Latest task".into(),
-                "Latest task".into(),
-            ))
+            Some(
+                "## Naming context\n\nFirst user message:\nFirst task\n\nRecent user messages:\n1. Third task\n2. Fourth task\n3. Latest task".into()
+            )
         );
         assert_eq!(
             rename_prompt_pi(
                 r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Only task"}]}}"#
             ),
-            Some((
-                "## Naming context\n\nFirst user message:\nOnly task\n\nRecent user messages:\nnone".into(),
-                "Only task".into(),
-            ))
+            Some(
+                "## Naming context\n\nFirst user message:\nOnly task\n\nRecent user messages:\nnone".into()
+            )
         );
     }
 
