@@ -3,12 +3,12 @@
 herdr plugin (Rust) that names a herdr pane from the coding agent's
 first prompt. When the pane is in an auto-generated linked worktree, it also
 renames the worktree branch and workspace. The naming engine is swappable:
-on-device Apple FoundationModels by default (a small Swift helper), with a
-headless Codex call as the automatic fallback.
+on-device Apple FoundationModels first on macOS, then a clean headless Pi call
+using Pi's existing authentication, with Codex as the final model fallback.
 
 ## Architecture
 
-Single binary, two phases (`src/main.rs`):
+The Rust binary has three entry paths (`src/main.rs`):
 
 - **Hot phase** (default, every `pane.agent_status_changed` event): pure env-var
   reads, no I/O. `context::evaluate` bails unless the new status is `working` and
@@ -23,6 +23,9 @@ Single binary, two phases (`src/main.rs`):
   linked worktree whose current branch starts with `worktree/`,
   `git::rename_current_branch` renames it to `<prefix>/<slug>` and only then
   `herdr::workspace_rename` renames the workspace to `<slug>`.
+- **Action phase** (`rename-current`): reads the first and three latest Pi
+  prompts, reuses the same naming/effect path, prints the slug for the Pi extension, and may re-rename a
+  branch only when a prior run recorded it as plugin-managed.
 
 Naming outputs: pane `<slug>`; branch `<prefix>/<slug>` (bare `<slug>` when no prefix is configured;
 `main::compose_branch` joins them); workspace `<slug>` after a successful
@@ -43,30 +46,35 @@ the cleaned list. Codex remains a fallback only when Foundation fails.
 `generate_slug` (in `main.rs`) walks an ordered chain from `engine::engine_chain`,
 selected by `HERDR_NAMING_ENGINE`, and uses the first engine that returns a slug:
 
-- unset / `foundation` / unknown → `[Foundation, Codex]` (on-device first)
-- `codex` → `[Codex]` only
+- unset / `foundation` / unknown → `[Foundation, Pi, Codex]` on macOS
+- unset / `foundation` / unknown → `[Pi, Codex]` on Linux
+- `pi` or `codex` → only that engine
 
-Each engine returns `Option<String>` and yields `None` on any failure, so the
-chain degrades cleanly: Foundation → Codex → deterministic local slug. Engine
-binaries are overridable via `HERDR_NAMING_FOUNDATION_BIN` and
+Each engine returns `Option<String>` and yields `None` on failure. Automatic
+naming may then use the deterministic local slug; explicit `/rename` instead
+reports that no authenticated naming model is available. Engine binaries are
+overridable via `HERDR_NAMING_FOUNDATION_BIN`, `HERDR_NAMING_PI_BIN`, and
 `HERDR_NAMING_CODEX_BIN`.
 
 **OS gate:** the `Foundation` engine is `#[cfg(target_os = "macos")]`. Off macOS
 (e.g. Linux) the enum variant, the `foundation` module, and the matching
-`[[build]]` swift step are all compiled/skipped, so the default chain collapses
-to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
+`[[build]]` swift step are all compiled/skipped, so the default chain becomes
+`[Pi, Codex]` and a `foundation` request is silently downgraded. The plugin's
 `platforms` are `["macos", "linux"]` (Unix only; the cold phase detaches via
 `setsid`). Verify the Linux build with
 `cargo check --target x86_64-unknown-linux-gnu`.
 
 ## Module map
 
-- `context.rs` — parse the two env JSON blobs, working-status eligibility gate
+- `context.rs` — parse event/action context and resolve the target pane/worktree
 - `slug.rs` — `sanitize` + `fallback_from_prompt`
 - `engine.rs` — pure `engine_chain(HERDR_NAMING_ENGINE)` → ordered fallback list
   (OS-aware: Foundation only on macOS)
-- `transcript.rs` — resolve transcript path (glob) + first-prompt extraction for
-  `claude` and `codex` (different on-disk formats). Claude slash-command
+- `pi.rs` — isolated headless Pi naming call with extensions, tools, context, and
+  session persistence disabled
+- `process.rs` — bounded child-process wait shared by Pi and Codex
+- `transcript.rs` — resolve transcript path (glob for Claude/Codex; reported
+  session path for Pi) + first/recent-prompt extraction. Claude slash-command
   wrappers are used as a fallback naming prompt, including `command-args`, when
   no normal non-meta user prompt exists; expanded skill bodies remain ignored.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
@@ -76,6 +84,8 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `herdr.rs`: `herdr pane get` (polled), pane/workspace task metadata, and
   pane/workspace renames
 - `git.rs` — current branch + `git branch -m`
+- `pi-extension.ts` — thin `/rename` command: invoke the Herdr action, wait for
+  its command log, then apply the returned slug to the Pi session
 - `naming-helper/` — SwiftPM package (`herdr-namer`): two FoundationModels
   guided-generation calls. The first fills a `@Generable TaskNameCandidates`
   with candidate slugs; the helper sanitizes and dedupes them. The second fills
@@ -86,9 +96,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 
 ## Conventions
 
-- Fail open: every path exits 0; never block herdr.
+- Event hooks fail open and never block Herdr; explicit actions exit non-zero so
+  `/rename` can report failures.
 - First-prompt idempotence is pane-scoped: a fresh claim marker blocks duplicate
-  cold phases, and a done marker blocks later events for the same pane.
+  cold phases, and a done marker blocks later events for the same pane. Manual
+  `/rename` intentionally bypasses those one-shot markers.
 - The cold phase polls for BOTH the session and the first prompt. Claude reports
   its session at SessionStart (before the prompt) and stays `working` with no new
   event, so a single transcript read can miss the prompt and never retry. Polling
@@ -99,7 +111,9 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   not user intent.
 - Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
-  A separate done marker is written after cold-phase completion.
+  A separate done marker is written after cold-phase completion. Successful
+  branch renames also record the exact managed branch, which is the guard for a
+  later manual branch rename.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
   integration-tested via `herdr plugin link` + `herdr plugin log list`.
 
@@ -157,9 +171,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   inference: only linked worktrees whose current branch starts with `worktree/`
   are renamed, and workspace rename runs only after branch rename succeeds.
 - Panes are renamed with `herdr pane rename`.
-- `agent_session` agent label is `claude` or `codex`; transcripts:
+- `agent_session` agent label is `claude`, `codex`, or `pi`; transcripts:
   Claude `~/.claude/projects/**/<uuid>.jsonl`, Codex
-  `~/.codex/sessions/**/rollout-*<uuid>.jsonl`.
+  `~/.codex/sessions/**/rollout-*<uuid>.jsonl`, Pi's reported session path.
+- The Pi call disables extensions, tools, skills, context files, and session
+  persistence to avoid recursion while reusing Pi's configured model and auth.
 - `--ignore-user-config` on the Codex call disables the user's Codex hooks
   (avoids recursion and nondeterminism); auth still resolves from `CODEX_HOME`.
 - Naming model is `gpt-5.5` + `model_reasoning_effort=low` (~2.5s). That is the
