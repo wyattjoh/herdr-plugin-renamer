@@ -125,11 +125,11 @@ fn action_phase() -> bool {
     let marker_key = marker_key_for_pane(&target.pane_id);
     let slug_file = format!("{}/{}.slug", state_dir(), marker_key);
     let slug = name_prompt(&prompt, &fallback_prompt, Path::new(&slug_file));
-    let renamed = apply_slug(&target, &marker_key, &slug, true);
-    if renamed {
-        println!("{slug}");
-    }
-    renamed
+    let Some(slug) = apply_slug(&target, &marker_key, &slug, true) else {
+        return false;
+    };
+    println!("{slug}");
+    true
 }
 
 /// The slow path, run detached so herdr is never blocked.
@@ -187,7 +187,11 @@ fn cold_phase() {
         checkout_path,
         is_linked_worktree,
     };
-    apply_slug(&target, &marker_key, &slug, false);
+    if apply_slug(&target, &marker_key, &slug, false).is_none() {
+        debug_log("cold: rename failed, removing claim");
+        let _ = std::fs::remove_file(&claim_marker);
+        return;
+    }
 
     let _ = std::fs::remove_file(&claim_marker);
     let _ = std::fs::write(&done_marker, now_secs().to_string());
@@ -201,55 +205,88 @@ fn name_prompt(prompt: &str, fallback_prompt: &str, slug_file: &Path) -> String 
     })
 }
 
-fn apply_slug(target: &context::Eligible, marker_key: &str, slug: &str, manual: bool) -> bool {
-    let pane_ok = herdr::pane_rename(&target.pane_id, slug);
+fn apply_slug(
+    target: &context::Eligible,
+    marker_key: &str,
+    requested_slug: &str,
+    manual: bool,
+) -> Option<String> {
+    let mut slug = requested_slug.to_string();
+    let mut branch_rename = None;
+
+    if !target.is_linked_worktree {
+        debug_log("skip branch/workspace rename, not a linked worktree");
+    } else if let Some(checkout_path) = target.checkout_path.as_deref() {
+        if let Some(current) = git::current_branch(checkout_path) {
+            let managed = current.starts_with("worktree/")
+                || std::fs::read_to_string(managed_branch_path(&state_dir(), marker_key))
+                    .ok()
+                    .is_some_and(|branch| branch.trim() == current);
+            if managed {
+                let prefix = resolve_branch_prefix();
+                let available = slug::first_available(&slug, |candidate| {
+                    let branch = compose_branch(prefix.as_deref(), candidate);
+                    if branch == current {
+                        Some(false)
+                    } else {
+                        git::branch_exists(checkout_path, &branch)
+                    }
+                });
+                let Some(available) = available else {
+                    debug_log("skip branch/workspace rename, branch availability check failed");
+                    if manual {
+                        eprintln!("could not check generated branch availability");
+                    }
+                    return None;
+                };
+                if available != slug {
+                    debug_log(&format!("branch name collision, using {available}"));
+                    slug = available;
+                }
+                let branch = compose_branch(prefix.as_deref(), &slug);
+                branch_rename = Some((checkout_path, current, branch));
+            } else {
+                debug_log(&format!(
+                    "skip branch/workspace rename, current branch is not plugin-managed: {current}"
+                ));
+            }
+        } else {
+            debug_log("skip branch/workspace rename, current branch unavailable");
+        }
+    } else {
+        debug_log("skip branch/workspace rename, checkout path unavailable");
+    }
+
+    let mut marker_ok = true;
+    let rename_workspace = if let Some((checkout_path, current, branch)) = branch_rename {
+        let branch_ok = current == branch || git::rename_current_branch(checkout_path, &branch);
+        debug_log(&format!("branch {current} -> {branch} ok={branch_ok}"));
+        if !branch_ok {
+            return None;
+        }
+        marker_ok = std::fs::write(managed_branch_path(&state_dir(), marker_key), &branch).is_ok();
+        true
+    } else {
+        false
+    };
+
+    let pane_ok = herdr::pane_rename(&target.pane_id, &slug);
     debug_log(&format!("pane {} -> {slug} ok={pane_ok}", target.pane_id));
 
-    let pane_metadata_ok = herdr::pane_report_task(&target.pane_id, slug);
-    let workspace_metadata_ok = herdr::workspace_report_task(&target.workspace_id, slug);
+    let pane_metadata_ok = herdr::pane_report_task(&target.pane_id, &slug);
+    let workspace_metadata_ok = herdr::workspace_report_task(&target.workspace_id, &slug);
     debug_log(&format!(
         "task metadata pane={pane_metadata_ok} workspace={workspace_metadata_ok}"
     ));
 
-    if !target.is_linked_worktree {
-        debug_log("skip branch/workspace rename, not a linked worktree");
-        return pane_ok;
+    let workspace_ok = !rename_workspace || herdr::workspace_rename(&target.workspace_id, &slug);
+    if rename_workspace {
+        debug_log(&format!(
+            "managed marker ok={marker_ok}; workspace rename ws={} -> {slug} ok={workspace_ok}",
+            target.workspace_id
+        ));
     }
-    let Some(checkout_path) = target.checkout_path.as_deref() else {
-        debug_log("skip branch/workspace rename, checkout path unavailable");
-        return pane_ok;
-    };
-    let Some(current) = git::current_branch(checkout_path) else {
-        debug_log("skip branch/workspace rename, current branch unavailable");
-        return pane_ok;
-    };
-    if !current.starts_with("worktree/") {
-        let managed = manual
-            && std::fs::read_to_string(managed_branch_path(&state_dir(), marker_key))
-                .ok()
-                .is_some_and(|branch| branch.trim() == current);
-        if !managed {
-            debug_log(&format!(
-                "skip branch/workspace rename, current branch is not plugin-managed: {current}"
-            ));
-            return pane_ok;
-        }
-    }
-
-    let branch = compose_branch(resolve_branch_prefix().as_deref(), slug);
-    let branch_ok = current == branch || git::rename_current_branch(checkout_path, &branch);
-    debug_log(&format!("branch {current} -> {branch} ok={branch_ok}"));
-    if !branch_ok {
-        return !manual && pane_ok;
-    }
-
-    let marker_ok = std::fs::write(managed_branch_path(&state_dir(), marker_key), &branch).is_ok();
-    let workspace_ok = herdr::workspace_rename(&target.workspace_id, slug);
-    debug_log(&format!(
-        "managed marker ok={marker_ok}; workspace rename ws={} -> {slug} ok={workspace_ok}",
-        target.workspace_id
-    ));
-    pane_ok && (!manual || marker_ok && workspace_ok)
+    (pane_ok && (!manual || marker_ok && workspace_ok)).then_some(slug)
 }
 
 /// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
