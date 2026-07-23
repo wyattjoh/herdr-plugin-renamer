@@ -2,15 +2,28 @@
 
 use std::env;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(45);
 const PROMPT_LIMIT: usize = 2000;
 
+fn pi_bin() -> PathBuf {
+    if let Some(bin) = env::var_os("HERDR_NAMING_PI_BIN") {
+        return bin.into();
+    }
+    if let Some(home) = env::var_os("HOME") {
+        let local = PathBuf::from(home).join(".local/bin/pi");
+        if local.is_file() {
+            return local;
+        }
+    }
+    "pi".into()
+}
+
 pub fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
-    let bin = env::var("HERDR_NAMING_PI_BIN").unwrap_or_else(|_| "pi".to_string());
+    let bin = pi_bin();
     let truncated: String = prompt.chars().take(PROMPT_LIMIT).collect();
     let full_prompt = format!(
         "Output only a short kebab-case git branch slug (2-4 words, lowercase, \
