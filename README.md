@@ -13,6 +13,12 @@ supported Macs, then Codex, then a deterministic local fallback.
 herdr plugin install wyattjoh/herdr-plugin-renamer
 ```
 
+Plugins are session-scoped. Repeat the install for every named Herdr session:
+
+```sh
+herdr --session agents plugin install wyattjoh/herdr-plugin-renamer
+```
+
 Install the herdr integration for each agent you use:
 
 ```sh
