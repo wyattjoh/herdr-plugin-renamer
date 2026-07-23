@@ -4,8 +4,8 @@
 
 use std::env;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPT_LIMIT: usize = 2000;
@@ -56,9 +56,12 @@ pub fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
         .spawn()
         .ok()?;
 
-    if !wait_with_timeout(&mut child, TIMEOUT) {
+    let Some(status) = crate::process::wait_with_timeout(&mut child, TIMEOUT) else {
         let _ = child.kill();
         let _ = child.wait();
+        return None;
+    };
+    if !status.success() {
         return None;
     }
 
@@ -68,23 +71,5 @@ pub fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
         None
     } else {
         Some(slug)
-    }
-}
-
-/// Poll `try_wait` until the child exits or the timeout elapses. Returns true if
-/// the child finished on its own.
-fn wait_with_timeout(child: &mut Child, timeout: Duration) -> bool {
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(_) => return false,
-        }
     }
 }

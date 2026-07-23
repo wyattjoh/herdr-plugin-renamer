@@ -18,6 +18,8 @@ mod engine;
 mod foundation;
 mod git;
 mod herdr;
+mod pi;
+mod process;
 mod slug;
 mod transcript;
 
@@ -28,7 +30,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// A claim marker younger than this is treated as "cold phase in flight" so we
-/// don't launch a second Codex call for the same workspace. Older markers are
+/// don't launch a second naming call for the same workspace. Older markers are
 /// considered stale (e.g. a crashed cold phase) and may be reclaimed.
 const CLAIM_TTL: Duration = Duration::from_secs(120);
 const SESSION_POLL_ATTEMPTS: u32 = 12;
@@ -117,14 +119,16 @@ fn action_phase() -> bool {
         eprintln!("no agent session for focused pane");
         return false;
     };
-    let Some((prompt, fallback_prompt)) = transcript::read_rename_prompt(&agent, &session_id)
-    else {
+    let Some(prompt) = transcript::read_rename_prompt(&agent, &session_id) else {
         eprintln!("no Pi prompt to rename from");
         return false;
     };
     let marker_key = marker_key_for_pane(&target.pane_id);
     let slug_file = format!("{}/{}.slug", state_dir(), marker_key);
-    let slug = name_prompt(&prompt, &fallback_prompt, Path::new(&slug_file));
+    let Some(slug) = generate_slug(&prompt, Path::new(&slug_file)) else {
+        eprintln!("no naming model available; ensure Pi or Codex is authenticated");
+        return false;
+    };
     let Some(slug) = apply_slug(&target, &marker_key, &slug, true) else {
         return false;
     };
@@ -179,7 +183,7 @@ fn cold_phase() {
     ));
 
     let slug_file = format!("{state_dir}/{marker_key}.slug");
-    let slug = name_prompt(&prompt, &prompt, Path::new(&slug_file));
+    let slug = name_prompt(&prompt, Path::new(&slug_file));
     let target = context::Eligible {
         pane_id,
         workspace_id,
@@ -197,9 +201,9 @@ fn cold_phase() {
     let _ = std::fs::write(&done_marker, now_secs().to_string());
 }
 
-fn name_prompt(prompt: &str, fallback_prompt: &str, slug_file: &Path) -> String {
+fn name_prompt(prompt: &str, slug_file: &Path) -> String {
     generate_slug(prompt, slug_file).unwrap_or_else(|| {
-        let slug = slug::fallback_from_prompt(fallback_prompt);
+        let slug = slug::fallback_from_prompt(prompt);
         debug_log(&format!("all engines failed, fallback slug={slug}"));
         slug
     })
@@ -290,14 +294,14 @@ fn apply_slug(
 }
 
 /// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
-/// slug an engine produces. `None` means every engine in the chain failed (so
-/// the caller uses the deterministic local fallback).
+/// slug an engine produces. `None` means every engine in the chain failed.
 fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
     let selection = env::var("HERDR_NAMING_ENGINE").ok();
     for eng in engine::engine_chain(selection.as_deref()) {
         let result = match eng {
             #[cfg(target_os = "macos")]
             engine::Engine::Foundation => foundation::generate_slug(prompt),
+            engine::Engine::Pi => pi::generate_slug(prompt, slug_file),
             engine::Engine::Codex => codex::generate_slug(prompt, slug_file),
         };
         match result {

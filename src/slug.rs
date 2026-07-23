@@ -1,5 +1,5 @@
 //! Turning arbitrary text into a safe kebab-case slug, and a deterministic
-//! fallback slug derived from the prompt when the Codex naming engine is
+//! fallback slug derived from the prompt when automatic naming models are
 //! unavailable.
 
 const MAX_WORDS: usize = 6;
