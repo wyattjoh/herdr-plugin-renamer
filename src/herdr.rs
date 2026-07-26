@@ -13,8 +13,8 @@ fn herdr_bin() -> String {
 }
 
 /// `herdr pane get <pane_id>` returns JSON by default. Extract the agent label
-/// and native session id from `agent_session`. Returns `None` when the session
-/// has not been reported yet.
+/// and session reference (an id or Pi-reported path) from `agent_session`.
+/// Returns `None` when the session has not been reported yet.
 fn pane_agent_session(pane_id: &str) -> Option<(String, String)> {
     let output = Command::new(herdr_bin())
         .args(["pane", "get", pane_id])
@@ -43,7 +43,7 @@ fn pane_agent_session(pane_id: &str) -> Option<(String, String)> {
     Some((agent, value))
 }
 
-/// Poll `pane get` for the session id. `pane.agent_status_changed` can fire
+/// Poll `pane get` for the session reference. `pane.agent_status_changed` can fire
 /// before herdr has received the session from the integration hook, so we retry
 /// briefly before giving up.
 pub fn poll_agent_session(
