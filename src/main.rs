@@ -31,12 +31,17 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// A claim marker younger than this is treated as "cold phase in flight" so we
-/// don't launch a second Codex call for the same workspace. Older markers are
+/// don't launch a second naming call for the same pane. This covers Pi's
+/// two-minute transcript wait plus the engine fallback chain. Older markers are
 /// considered stale (e.g. a crashed cold phase) and may be reclaimed.
-const CLAIM_TTL: Duration = Duration::from_secs(120);
+const CLAIM_TTL: Duration = Duration::from_secs(180);
 const SESSION_POLL_ATTEMPTS: u32 = 12;
 const SESSION_POLL_DELAY: Duration = Duration::from_millis(500);
-const PROMPT_POLL_ATTEMPTS: u32 = 20;
+const DEFAULT_PROMPT_POLL_ATTEMPTS: u32 = 20;
+// Pi intentionally defers creating/flushing a new session file until the first
+// assistant message arrives. Give slow-thinking models up to two minutes to
+// make the user's already-submitted prompt visible on disk.
+const PI_PROMPT_POLL_ATTEMPTS: u32 = 160;
 const PROMPT_POLL_DELAY: Duration = Duration::from_millis(750);
 
 fn main() {
@@ -120,10 +125,10 @@ fn cold_phase() {
     debug_log(&format!("cold: session agent={agent} id={session_id}"));
 
     // Poll for the first prompt, not just read once. Claude reports its session
-    // id at SessionStart (before the prompt is submitted) and flushes the user
-    // line a beat after the pane flips to `working`, so a single read can miss
-    // it. Since the agent then stays `working` with no new event to retry on, we
-    // must wait here rather than bail.
+    // id at SessionStart before the prompt is submitted. Pi goes further: it
+    // intentionally defers writing a new session to disk until the first
+    // assistant message arrives. Since both agents then stay `working` with no
+    // new event to retry on, we must wait here rather than bail.
     let prompt = match poll_first_prompt(&agent, &session_id) {
         Some(prompt) => prompt,
         None => {
@@ -246,12 +251,34 @@ fn resolve_branch_prefix() -> Option<String> {
 /// or we exhaust the attempts. Covers the lag between the pane reporting
 /// `working` and the agent flushing the first user line to its transcript.
 fn poll_first_prompt(agent: &str, session_id: &str) -> Option<String> {
-    for attempt in 0..PROMPT_POLL_ATTEMPTS {
-        if let Some(prompt) = transcript::read_first_prompt(agent, session_id) {
+    poll_first_prompt_with(
+        agent,
+        session_id,
+        transcript::read_first_prompt,
+        std::thread::sleep,
+    )
+}
+
+fn poll_first_prompt_with<R, S>(
+    agent: &str,
+    session_id: &str,
+    mut read_prompt: R,
+    mut sleep: S,
+) -> Option<String>
+where
+    R: FnMut(&str, &str) -> Option<String>,
+    S: FnMut(Duration),
+{
+    let attempts = match agent {
+        "pi" => PI_PROMPT_POLL_ATTEMPTS,
+        _ => DEFAULT_PROMPT_POLL_ATTEMPTS,
+    };
+    for attempt in 0..attempts {
+        if let Some(prompt) = read_prompt(agent, session_id) {
             return Some(prompt);
         }
-        if attempt + 1 < PROMPT_POLL_ATTEMPTS {
-            std::thread::sleep(PROMPT_POLL_DELAY);
+        if attempt + 1 < attempts {
+            sleep(PROMPT_POLL_DELAY);
         }
     }
     None
@@ -374,7 +401,23 @@ fn debug_log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_branch, marker_key_for_pane};
+    use super::{compose_branch, marker_key_for_pane, poll_first_prompt_with};
+
+    #[test]
+    fn pi_waits_past_the_default_prompt_window() {
+        let mut reads = 0;
+        let prompt = poll_first_prompt_with(
+            "pi",
+            "/tmp/pi-session.jsonl",
+            |_, _| {
+                reads += 1;
+                (reads == 22).then(|| "Delayed Pi prompt".to_string())
+            },
+            |_| {},
+        );
+
+        assert_eq!(prompt.as_deref(), Some("Delayed Pi prompt"));
+    }
 
     #[test]
     fn no_prefix_is_bare_slug() {
