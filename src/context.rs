@@ -58,6 +58,19 @@ pub fn evaluate(event_json: &str, context_json: &str) -> Option<Eligible> {
         return None;
     }
 
+    target(event.data.pane_id, event.data.workspace_id, context_json)
+}
+
+/// Resolve the focused pane/workspace Herdr injects for a manual plugin action.
+pub fn action_target(
+    pane_id: String,
+    workspace_id: String,
+    context_json: &str,
+) -> Option<Eligible> {
+    target(pane_id, workspace_id, context_json)
+}
+
+fn target(pane_id: String, workspace_id: String, context_json: &str) -> Option<Eligible> {
     let context: Context = serde_json::from_str(context_json).ok()?;
     let (checkout_path, is_linked_worktree) = context
         .worktree
@@ -65,8 +78,8 @@ pub fn evaluate(event_json: &str, context_json: &str) -> Option<Eligible> {
         .unwrap_or((None, false));
 
     Some(Eligible {
-        pane_id: event.data.pane_id,
-        workspace_id: event.data.workspace_id,
+        pane_id,
+        workspace_id,
         workspace_label: context.workspace_label,
         checkout_path,
         is_linked_worktree,
@@ -140,8 +153,18 @@ mod tests {
     }
 
     #[test]
+    fn action_uses_focused_target_and_worktree_context() {
+        let target =
+            action_target("w4B:p2".into(), "w4B".into(), CTX_ELIGIBLE).expect("action target");
+        assert_eq!(target.pane_id, "w4B:p2");
+        assert_eq!(target.checkout_path.as_deref(), Some("/tmp/wt"));
+        assert!(target.is_linked_worktree);
+    }
+
+    #[test]
     fn garbage_json_bails() {
         assert!(evaluate("not json", CTX_ELIGIBLE).is_none());
         assert!(evaluate(&event("working"), "not json").is_none());
+        assert!(action_target("p".into(), "w".into(), "not json").is_none());
     }
 }

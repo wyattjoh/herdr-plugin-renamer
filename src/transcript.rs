@@ -1,15 +1,27 @@
-//! Resolving an agent transcript from a native session id or Pi-reported path and extracting the
-//! first genuine user prompt. Supports Claude Code, Codex, and Pi, which use
-//! different on-disk formats.
+//! Resolving an agent transcript from a native session id or Pi-reported path and extracting
+//! genuine user prompts. Supports Claude Code, Codex, and Pi, which use different on-disk formats.
 
 use std::env;
 use std::path::PathBuf;
 
 /// Resolve the transcript file, read it, and return the first real user prompt.
 pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
-    let path = resolve_path(agent, session_id)?;
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let contents = read_transcript(agent, session_id)?;
     first_prompt(agent, &contents)
+}
+
+/// Build the explicit `/rename` model context from real Pi prompts.
+pub fn read_rename_prompt(agent: &str, session_id: &str) -> Option<String> {
+    let contents = read_transcript(agent, session_id)?;
+    match agent {
+        "pi" => rename_prompt_pi(&contents),
+        _ => None,
+    }
+}
+
+fn read_transcript(agent: &str, session_id: &str) -> Option<String> {
+    let path = resolve_path(agent, session_id)?;
+    std::fs::read_to_string(path).ok()
 }
 
 /// Resolve the agent's `.jsonl` file; Pi reports its path directly.
@@ -239,26 +251,40 @@ fn is_codex_preamble(text: &str) -> bool {
 /// Pi JSONL: the first user `message` entry with text content. Session and
 /// model-change records have no `message.role` and are skipped.
 fn first_prompt_pi(contents: &str) -> Option<String> {
-    for line in contents.lines() {
-        let value: serde_json::Value = match serde_json::from_str(line.trim()) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if value.get("type").and_then(|t| t.as_str()) != Some("message")
-            || value.pointer("/message/role").and_then(|r| r.as_str()) != Some("user")
-        {
-            continue;
-        }
-        let text = value
-            .pointer("/message/content")
-            .map(extract_claude_text)
-            .unwrap_or_default();
-        let text = text.trim();
-        if !text.is_empty() {
-            return Some(text.to_string());
-        }
+    contents.lines().find_map(pi_prompt)
+}
+
+fn rename_prompt_pi(contents: &str) -> Option<String> {
+    let messages: Vec<_> = contents.lines().filter_map(pi_prompt).collect();
+    let first = messages.first()?;
+    let recent = messages
+        .iter()
+        .enumerate()
+        .skip(messages.len().saturating_sub(3))
+        .filter(|(index, _)| *index != 0)
+        .enumerate()
+        .map(|(index, (_, message))| format!("{}. {message}", index + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recent = if recent.is_empty() { "none" } else { &recent };
+    Some(format!(
+        "## Naming context\n\nFirst user message:\n{first}\n\nRecent user messages:\n{recent}"
+    ))
+}
+
+fn pi_prompt(line: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type").and_then(|t| t.as_str()) != Some("message")
+        || value.pointer("/message/role").and_then(|r| r.as_str()) != Some("user")
+    {
+        return None;
     }
-    None
+    let text = value
+        .pointer("/message/content")
+        .map(extract_claude_text)
+        .unwrap_or_default();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 #[cfg(test)]
@@ -425,18 +451,37 @@ mod tests {
     }
 
     #[test]
-    fn pi_reads_first_user_text_message() {
+    fn pi_reads_first_prompt_and_builds_rename_context() {
         let jsonl = concat!(
             r#"{"type":"session","id":"session"}"#,
             "\n",
             r#"{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}]}}"#,
             "\n",
-            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Rename the worktree from my task"}]}}"#,
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"First task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Second task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Third task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Fourth task"}]}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Latest task"}]}}"#,
             "\n",
         );
+        assert_eq!(first_prompt("pi", jsonl).as_deref(), Some("First task"));
         assert_eq!(
-            first_prompt("pi", jsonl).as_deref(),
-            Some("Rename the worktree from my task")
+            rename_prompt_pi(jsonl),
+            Some(
+                "## Naming context\n\nFirst user message:\nFirst task\n\nRecent user messages:\n1. Third task\n2. Fourth task\n3. Latest task".into()
+            )
+        );
+        assert_eq!(
+            rename_prompt_pi(
+                r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Only task"}]}}"#
+            ),
+            Some(
+                "## Naming context\n\nFirst user message:\nOnly task\n\nRecent user messages:\nnone".into()
+            )
         );
     }
 

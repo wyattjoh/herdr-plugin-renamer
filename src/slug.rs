@@ -1,5 +1,5 @@
 //! Turning arbitrary text into a safe kebab-case slug, and a deterministic
-//! fallback slug derived from the prompt when the Codex naming engine is
+//! fallback slug derived from the prompt when automatic naming models are
 //! unavailable.
 
 const MAX_WORDS: usize = 6;
@@ -54,6 +54,26 @@ pub fn fallback_from_prompt(prompt: &str) -> String {
     }
 }
 
+/// Return the base slug or its first free numeric suffix. `is_taken` returns
+/// `None` when availability cannot be determined.
+pub fn first_available(
+    base: &str,
+    mut is_taken: impl FnMut(&str) -> Option<bool>,
+) -> Option<String> {
+    if !is_taken(base)? {
+        return Some(base.to_string());
+    }
+    for number in 2.. {
+        let suffix = format!("-{number}");
+        let stem: String = base.chars().take(MAX_LEN - suffix.len()).collect();
+        let candidate = format!("{}{suffix}", stem.trim_end_matches('-'));
+        if !is_taken(&candidate)? {
+            return Some(candidate);
+        }
+    }
+    unreachable!()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +123,20 @@ mod tests {
         assert_eq!(
             fallback_from_prompt("\n\n  \nRefactor token validation"),
             "refactor-token-validation"
+        );
+    }
+
+    #[test]
+    fn adds_first_free_suffix_without_exceeding_slug_limit() {
+        let taken = ["rename-task", "rename-task-2"];
+        assert_eq!(
+            first_available("rename-task", |candidate| Some(taken.contains(&candidate))),
+            Some("rename-task-3".into())
+        );
+        let maxed = "a".repeat(MAX_LEN);
+        assert_eq!(
+            first_available(&maxed, |candidate| Some(candidate == maxed)).map(|slug| slug.len()),
+            Some(MAX_LEN)
         );
     }
 }

@@ -2,9 +2,9 @@ id = "herdr-plugin-renamer"
 name = "Herdr Renamer"
 version = "0.1.0"
 min_herdr_version = "0.7.4"
-description = "Names panes, plus auto-generated worktree branches and workspaces, from the agent's first prompt via an on-device or Codex naming call."
+description = "Names panes, plus auto-generated worktree branches and workspaces, from the agent's prompts via FoundationModels, Pi, or Codex."
 # Unix-only (the cold phase detaches via setsid). On Linux the on-device engine
-# is compiled out and naming falls back to Codex; macOS adds FoundationModels.
+# is compiled out; macOS adds FoundationModels before Pi and Codex.
 platforms = ["macos", "linux"]
 
 # Build steps run on `herdr plugin install` (not on `herdr plugin link`).
@@ -16,10 +16,17 @@ command = ["cargo", "build", "--release"]
 # macOS-only: gated so a Linux install never tries to run `swift build`. The
 # Rust binary compiles the Foundation engine out entirely off macOS, so this
 # step is the matching build-time gate. Optional at runtime (the plugin falls
-# back to Codex when it is missing or Apple Intelligence is unavailable).
+# back to Pi and Codex when it is missing or Apple Intelligence is unavailable).
 [[build]]
 command = ["swift", "build", "-c", "release", "--package-path", "naming-helper"]
 platforms = ["macos"]
+
+[[actions]]
+id = "rename-current"
+title = "Rename current Pi task"
+description = "Generate a new name from the first and recent Pi prompts."
+contexts = ["pane"]
+command = ["target/release/herdr-plugin-renamer"]
 
 # Fires on EVERY agent status transition. The command bails in microseconds
 # (pure env-var reads) unless an agent just started working. There is no
