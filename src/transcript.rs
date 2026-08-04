@@ -1,6 +1,6 @@
 //! Resolving an agent transcript from a native session id or Pi-reported path and extracting the
-//! first genuine user prompt. Supports Claude Code, Codex, and Pi, which use
-//! different on-disk formats.
+//! first genuine user prompt. Supports Claude Code, Codex, Pi, and Copilot CLI,
+//! which use different on-disk formats.
 
 use std::env;
 use std::path::PathBuf;
@@ -23,6 +23,22 @@ fn resolve_path_with_home(agent: &str, session_id: &str, home: Option<&str>) -> 
         return Some(PathBuf::from(session_id));
     }
     let home = home?;
+    if agent == "copilot" {
+        if session_id.is_empty()
+            || !session_id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            return None;
+        }
+        return Some(
+            PathBuf::from(home)
+                .join(".copilot")
+                .join("session-state")
+                .join(session_id)
+                .join("events.jsonl"),
+        );
+    }
     let pattern = match agent {
         "claude" => {
             let base = env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| format!("{home}/.claude"));
@@ -42,6 +58,7 @@ pub fn first_prompt(agent: &str, contents: &str) -> Option<String> {
     match agent {
         "claude" => first_prompt_claude(contents),
         "codex" => first_prompt_codex(contents),
+        "copilot" => first_prompt_copilot(contents),
         "pi" => first_prompt_pi(contents),
         _ => None,
     }
@@ -236,6 +253,30 @@ fn is_codex_preamble(text: &str) -> bool {
         || text.starts_with("<environment_context>")
 }
 
+/// Copilot CLI event JSONL: the first non-empty `user.message` content.
+fn first_prompt_copilot(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let value: serde_json::Value = match serde_json::from_str(line.trim()) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(|t| t.as_str()) != Some("user.message") {
+            continue;
+        }
+        let text = match value
+            .pointer("/data/content")
+            .and_then(|content| content.as_str())
+        {
+            Some(text) => text.trim(),
+            None => continue,
+        };
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 /// Pi JSONL: the first user `message` entry with text content. Session and
 /// model-change records have no `message.role` and are skipped.
 fn first_prompt_pi(contents: &str) -> Option<String> {
@@ -414,6 +455,33 @@ mod tests {
             first_prompt("codex", jsonl).as_deref(),
             Some("Implement rate limiting on the API")
         );
+    }
+
+    #[test]
+    fn copilot_reads_first_user_message() {
+        let jsonl = concat!(
+            r#"{"type":"session.start","data":{"sessionId":"session"}}"#,
+            "\n",
+            r#"{"type":"user.message","data":{"content":"   "}}"#,
+            "\n",
+            r#"{"type":"user.message","data":{"content":"Add Copilot support to the renamer","transformedContent":"expanded prompt"}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("copilot", jsonl).as_deref(),
+            Some("Add Copilot support to the renamer")
+        );
+    }
+
+    #[test]
+    fn copilot_resolves_session_path() {
+        assert_eq!(
+            resolve_path_with_home("copilot", "abc-123", Some("/tmp/home")),
+            Some(PathBuf::from(
+                "/tmp/home/.copilot/session-state/abc-123/events.jsonl"
+            ))
+        );
+        assert!(resolve_path_with_home("copilot", "../outside", Some("/tmp/home")).is_none());
     }
 
     #[test]

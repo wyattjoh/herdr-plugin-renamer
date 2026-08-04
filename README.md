@@ -4,8 +4,9 @@ A [herdr](https://herdr.dev) plugin that names panes from a coding agent's first
 prompt. In auto-generated linked worktrees, it also renames the git branch and
 workspace.
 
-It supports Claude Code, Codex, and Pi. Slugs come from Apple FoundationModels on
-supported Macs, then Codex, then a deterministic local fallback.
+It supports Claude Code, Codex, GitHub Copilot CLI, and Pi. Slugs come from
+Apple FoundationModels on supported Macs, then Codex, then a deterministic
+local fallback.
 
 ## Install
 
@@ -18,6 +19,7 @@ Install the herdr integration for each agent you use:
 ```sh
 herdr integration install claude
 herdr integration install codex
+herdr integration install copilot
 herdr integration install pi
 ```
 
