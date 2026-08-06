@@ -90,15 +90,18 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - First-prompt idempotence is pane-scoped: a fresh claim marker blocks duplicate
   cold phases, and a done marker blocks later events for the same pane.
 - The cold phase polls for BOTH the session and the first prompt. Claude reports
-  its session at SessionStart (before the prompt) and stays `working` with no new
-  event, so a single transcript read can miss the prompt and never retry. Polling
-  the prompt (not just the session) is what makes the Claude path reliable.
+  its session at SessionStart before the prompt exists. Pi intentionally defers
+  creating/flushing a new session file until its first assistant message, which
+  may arrive well after the `working` event. Both stay `working` with no new
+  event, so Pi gets a two-minute prompt window while other agents keep the short
+  default window.
 - Claude slash-command starts count as a prompt fallback. Use the invocation
   wrapper (`command-message`/`command-name` plus `command-args`) for naming, but
   never the expanded skill payload (`isMeta:true`) because it is framework text,
   not user intent.
-- Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
-  staleness TTL; removed on a transient cold-phase miss so a later event retries.
+- Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 180s
+  staleness TTL covering Pi's prompt wait plus engine fallbacks; removed on a
+  transient cold-phase miss so a later event retries.
   A separate done marker is written after cold-phase completion.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
   integration-tested via `herdr plugin link` + `herdr plugin log list`.
