@@ -5,11 +5,19 @@
 use std::env;
 use std::path::PathBuf;
 
+/// Literal first prompt plus optional Claude-expanded skill instructions.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FirstPrompt {
+    pub literal: String,
+    pub skill_expansion: Option<String>,
+    pub is_command_fallback: bool,
+}
+
 /// Resolve the transcript file, read it, and return the first real user prompt.
-pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
+pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<FirstPrompt> {
     let path = resolve_path(agent, session_id)?;
     let contents = std::fs::read_to_string(&path).ok()?;
-    first_prompt(agent, &contents)
+    first_prompt_context(agent, &contents)
 }
 
 /// Resolve the agent's `.jsonl` file; Pi reports its path directly.
@@ -37,22 +45,34 @@ fn resolve_path_with_home(agent: &str, session_id: &str, home: Option<&str>) -> 
     glob::glob(&pattern).ok()?.flatten().next()
 }
 
-/// Dispatch to the per-agent transcript parser.
+/// Dispatch to the per-agent transcript parser, returning only the literal
+/// prompt for parser-focused tests that do not need expansion metadata.
+#[cfg(test)]
 pub fn first_prompt(agent: &str, contents: &str) -> Option<String> {
-    match agent {
-        "claude" => first_prompt_claude(contents),
-        "codex" => first_prompt_codex(contents),
-        "pi" => first_prompt_pi(contents),
-        _ => None,
-    }
+    first_prompt_context(agent, contents).map(|prompt| prompt.literal)
+}
+
+fn first_prompt_context(agent: &str, contents: &str) -> Option<FirstPrompt> {
+    let (literal, skill_expansion) = match agent {
+        "claude" => return first_prompt_claude(contents),
+        "codex" => (first_prompt_codex(contents)?, None),
+        "pi" => (first_prompt_pi(contents)?, None),
+        _ => return None,
+    };
+    Some(FirstPrompt {
+        literal,
+        skill_expansion,
+        is_command_fallback: false,
+    })
 }
 
 /// Claude Code JSONL: the first `type=="user"` line that is not meta, carries
 /// genuine text (string or `text` blocks), and is not a slash/local-command
 /// wrapper. If no such line exists, falls back to the first non-ignored
 /// slash-command invocation via `claude_command_prompt`.
-fn first_prompt_claude(contents: &str) -> Option<String> {
+fn first_prompt_claude(contents: &str) -> Option<FirstPrompt> {
     let mut command_fallback = None;
+    let mut skill_expansion = None;
 
     for line in contents.lines() {
         let line = line.trim();
@@ -66,13 +86,19 @@ fn first_prompt_claude(contents: &str) -> Option<String> {
         if value.get("type").and_then(|t| t.as_str()) != Some("user") {
             continue;
         }
-        if value.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
-            continue;
-        }
         let content = match value.get("message").and_then(|m| m.get("content")) {
             Some(c) => c,
             None => continue,
         };
+        if value.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+            if command_fallback.is_some() && skill_expansion.is_none() {
+                let text = extract_claude_text(content);
+                if is_claude_skill_expansion(&text) {
+                    skill_expansion = Some(text);
+                }
+            }
+            continue;
+        }
         let text = extract_claude_text(content);
         let text = text.trim();
         if text.is_empty() {
@@ -84,10 +110,23 @@ fn first_prompt_claude(contents: &str) -> Option<String> {
             }
             continue;
         }
-        return Some(text.to_string());
+        return Some(FirstPrompt {
+            literal: text.to_string(),
+            skill_expansion: None,
+            is_command_fallback: false,
+        });
     }
 
-    command_fallback
+    command_fallback.map(|literal| FirstPrompt {
+        literal,
+        skill_expansion,
+        is_command_fallback: true,
+    })
+}
+
+fn is_claude_skill_expansion(text: &str) -> bool {
+    text.trim_start()
+        .starts_with("Base directory for this skill:")
 }
 
 /// `message.content` is usually a string, sometimes an array of blocks. Only
@@ -306,6 +345,28 @@ mod tests {
         assert_eq!(
             first_prompt("claude", jsonl).as_deref(),
             Some("improve-codebase-architecture")
+        );
+    }
+
+    #[test]
+    fn claude_command_wrapper_captures_expanded_skill_context() {
+        let jsonl = concat!(
+            r#"{"type":"user","message":{"content":"<command-message>wayfinder</command-message>\n<command-name>/wayfinder</command-name>\n<command-args>@docs/plan.md</command-args>"}}"#,
+            "\n",
+            r##"{"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"Base directory for this skill: /tmp/skills/wayfinder\n\n# Wayfinder\nDiscover the implementation route."}]}}"##,
+            "\n",
+        );
+
+        assert_eq!(
+            first_prompt_context("claude", jsonl),
+            Some(FirstPrompt {
+                literal: "wayfinder @docs/plan.md".to_string(),
+                skill_expansion: Some(
+                    "Base directory for this skill: /tmp/skills/wayfinder\n\n# Wayfinder\nDiscover the implementation route."
+                        .to_string()
+                ),
+                is_command_fallback: true,
+            })
         );
     }
 

@@ -15,9 +15,9 @@ Single binary, two phases (`src/main.rs`):
   this pane does not already have a done marker. On a pass, writes a pane-scoped
   claim marker and forks the cold phase detached (`setsid`).
 - **Cold phase** (`HERDR_NAMING_PHASE=cold`): `herdr::poll_agent_session` →
-  `transcript::read_first_prompt` → `main::generate_slug` (walks the
-  `engine::engine_chain`; fallback `slug::fallback_from_prompt`) →
-  `herdr::pane_rename`. The generated slug is also reported as the `task`
+  `transcript::read_first_prompt` → `prompt::expand_naming_input` →
+  `main::generate_slug` (walks the `engine::engine_chain`; fallback
+  `slug::fallback_from_prompt`) → `herdr::pane_rename`. The generated slug is also reported as the `task`
   metadata token on the pane and workspace for custom Agent and Space sidebar
   rows. If the pane is in a
   linked worktree whose current branch starts with `worktree/`,
@@ -68,7 +68,15 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 - `transcript.rs` — resolve transcript path (glob for Claude/Codex; reported
   session path for Pi) + first-prompt extraction. Claude slash-command wrappers
   are used as a fallback naming prompt, including `command-args`, when no normal
-  non-meta user prompt exists; expanded skill bodies remain ignored.
+  non-meta user prompt exists. The matching Claude-expanded skill body is
+  retained separately as optional naming context; unrelated meta entries remain
+  ignored.
+- `prompt.rs` — narrow naming-input enrichment seam. Retains the literal prompt,
+  appends a bounded skill excerpt, and safely expands `@relative/file` references
+  from the canonical pane checkout. Rejects traversal/symlink escapes,
+  directories, special files, binary/non-UTF-8 content, and files over 256 KiB.
+  Defaults: 1,000 skill characters, 1,200 per file, and 2,400 total appended
+  context characters.
 - `foundation.rs` — macOS-only (`#[cfg(target_os = "macos")]`) on-device engine;
   builds a bounded head/tail prompt excerpt, shells to the `herdr-namer` Swift
   helper (15s timeout), sanitizes its stdout
@@ -94,9 +102,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   event, so a single transcript read can miss the prompt and never retry. Polling
   the prompt (not just the session) is what makes the Claude path reliable.
 - Claude slash-command starts count as a prompt fallback. Use the invocation
-  wrapper (`command-message`/`command-name` plus `command-args`) for naming, but
-  never the expanded skill payload (`isMeta:true`) because it is framework text,
-  not user intent.
+  wrapper (`command-message`/`command-name` plus `command-args`) as the literal
+  prompt. When Claude emits the matching skill expansion (`isMeta:true`, headed
+  by `Base directory for this skill:`), retain a bounded copy as supplemental
+  naming context. Continue to ignore unrelated meta/framework entries.
 - Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
   staleness TTL; removed on a transient cold-phase miss so a later event retries.
   A separate done marker is written after cold-phase completion.
@@ -145,6 +154,12 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   be `.modelNotReady` for the first call(s) after a cold start, so the live
   `cargo test foundation -- --ignored` check is flaky until warm (fails open to
   Codex by design); re-run once warm.
+
+- Naming-input expansion is on-device by default. Foundation receives bounded
+  skill and checkout-scoped file excerpts. Codex receives the literal prompt
+  unless `HERDR_NAMING_CODEX_EXPANDED_CONTEXT=true` explicitly permits sending
+  expanded repository context externally. The deterministic fallback always
+  uses the literal prompt.
 
 - Foundation prompt input is capped with a head/tail excerpt, not a front-only
   truncation: Rust sends 1200 characters from the start and 1200 from the end

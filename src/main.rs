@@ -21,6 +21,7 @@ mod engine;
 mod foundation;
 mod git;
 mod herdr;
+mod prompt;
 mod slug;
 mod transcript;
 
@@ -124,7 +125,7 @@ fn cold_phase() {
     // line a beat after the pane flips to `working`, so a single read can miss
     // it. Since the agent then stays `working` with no new event to retry on, we
     // must wait here rather than bail.
-    let prompt = match poll_first_prompt(&agent, &session_id) {
+    let first_prompt = match poll_first_prompt(&agent, &session_id) {
         Some(prompt) => prompt,
         None => {
             debug_log("cold: no first prompt after poll, removing claim");
@@ -133,16 +134,37 @@ fn cold_phase() {
         }
     };
     debug_log(&format!(
-        "cold: first prompt ({} chars): {}",
-        prompt.chars().count(),
-        prompt.chars().take(80).collect::<String>()
+        "cold: first prompt ({} chars, skill_context={}): {}",
+        first_prompt.literal.chars().count(),
+        first_prompt.skill_expansion.is_some(),
+        first_prompt.literal.chars().take(80).collect::<String>()
+    ));
+
+    let enrichment_policy = prompt::EnrichmentPolicy {
+        include_expanded_context: expanded_context_needed(),
+        ..prompt::EnrichmentPolicy::default()
+    };
+    let expanded_prompt = prompt::expand_naming_input(
+        &first_prompt.literal,
+        first_prompt.skill_expansion.as_deref(),
+        checkout_path.as_deref().map(Path::new),
+        &enrichment_policy,
+    );
+    debug_log(&format!(
+        "cold: enriched naming input={} chars",
+        expanded_prompt.chars().count()
     ));
 
     // Name it: walk the engine chain (on-device first by default, Codex
     // fallback), then a deterministic local slug if every engine fails.
     let slug_file = format!("{state_dir}/{marker_key}.slug");
-    let slug = generate_slug(&prompt, Path::new(&slug_file)).unwrap_or_else(|| {
-        let slug = slug::fallback_from_prompt(&prompt);
+    let slug = generate_slug(
+        &first_prompt.literal,
+        &expanded_prompt,
+        Path::new(&slug_file),
+    )
+    .unwrap_or_else(|| {
+        let slug = slug::fallback_from_prompt(&first_prompt.literal);
         debug_log(&format!("cold: all engines failed, fallback slug={slug}"));
         slug
     });
@@ -197,13 +219,20 @@ fn cold_phase() {
 /// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
 /// slug an engine produces. `None` means every engine in the chain failed (so
 /// the caller uses the deterministic local fallback).
-fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
+fn generate_slug(literal_prompt: &str, expanded_prompt: &str, slug_file: &Path) -> Option<String> {
     let selection = env::var("HERDR_NAMING_ENGINE").ok();
     for eng in engine::engine_chain(selection.as_deref()) {
         let result = match eng {
             #[cfg(target_os = "macos")]
-            engine::Engine::Foundation => foundation::generate_slug(prompt),
-            engine::Engine::Codex => codex::generate_slug(prompt, slug_file),
+            engine::Engine::Foundation => foundation::generate_slug(expanded_prompt),
+            engine::Engine::Codex => {
+                let prompt = if codex_expanded_context_enabled() {
+                    expanded_prompt
+                } else {
+                    literal_prompt
+                };
+                codex::generate_slug(prompt, slug_file)
+            }
         };
         match result {
             Some(slug) => {
@@ -214,6 +243,40 @@ fn generate_slug(prompt: &str, slug_file: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn expanded_context_needed() -> bool {
+    if codex_expanded_context_enabled() {
+        return true;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let selection = env::var("HERDR_NAMING_ENGINE").ok();
+        return engine::engine_chain(selection.as_deref()).contains(&engine::Engine::Foundation);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
+fn codex_expanded_context_enabled() -> bool {
+    expanded_context_setting(
+        env::var("HERDR_NAMING_CODEX_EXPANDED_CONTEXT")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn expanded_context_setting(value: Option<&str>) -> bool {
+    value
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// Join an optional branch prefix and the slug into the final branch name.
@@ -245,16 +308,25 @@ fn resolve_branch_prefix() -> Option<String> {
 /// Retry `read_first_prompt` until the transcript has the user's first message
 /// or we exhaust the attempts. Covers the lag between the pane reporting
 /// `working` and the agent flushing the first user line to its transcript.
-fn poll_first_prompt(agent: &str, session_id: &str) -> Option<String> {
+fn poll_first_prompt(agent: &str, session_id: &str) -> Option<transcript::FirstPrompt> {
+    let mut command_candidate = None;
     for attempt in 0..PROMPT_POLL_ATTEMPTS {
         if let Some(prompt) = transcript::read_first_prompt(agent, session_id) {
-            return Some(prompt);
+            let waiting_for_claude_skill =
+                agent == "claude" && prompt.is_command_fallback && prompt.skill_expansion.is_none();
+            if !waiting_for_claude_skill {
+                return Some(prompt);
+            }
+            // Claude writes the command wrapper before its expanded skill body.
+            // Keep the literal command as a fail-open candidate while polling
+            // for the supplemental meta entry.
+            command_candidate = Some(prompt);
         }
         if attempt + 1 < PROMPT_POLL_ATTEMPTS {
             std::thread::sleep(PROMPT_POLL_DELAY);
         }
     }
-    None
+    command_candidate
 }
 
 /// Re-exec ourselves in the cold phase, detached into a new session so it
@@ -374,7 +446,7 @@ fn debug_log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_branch, marker_key_for_pane};
+    use super::{compose_branch, expanded_context_setting, marker_key_for_pane};
 
     #[test]
     fn no_prefix_is_bare_slug() {
@@ -413,5 +485,14 @@ mod tests {
     #[test]
     fn marker_key_is_safe_for_pane_ids() {
         assert_eq!(marker_key_for_pane("w5V:p1"), "pane-w5V_p1");
+    }
+
+    #[test]
+    fn codex_expanded_context_requires_explicit_opt_in() {
+        assert!(!expanded_context_setting(None));
+        assert!(!expanded_context_setting(Some("false")));
+        assert!(expanded_context_setting(Some("true")));
+        assert!(expanded_context_setting(Some(" YES ")));
+        assert!(expanded_context_setting(Some("1")));
     }
 }

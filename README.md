@@ -31,6 +31,26 @@ herdr integration install pi
 Without either naming model, the plugin derives a rough local slug from the
 prompt.
 
+## Naming input
+
+For Claude slash-command starts, the plugin keeps the literal command and
+arguments, then appends a bounded excerpt of Claude's expanded skill instructions.
+It also expands `@relative/file` arguments from the pane checkout into bounded,
+clearly delimited excerpts. This lets input such as `/wayfinder @docs/plan.md`
+carry the skill's purpose and the referenced document's topic into naming.
+
+File expansion is fail-open and checkout-scoped. Only regular UTF-8 files that
+canonicalize inside the checkout are read. Missing files, directories, binary
+content, traversal and symlink escapes, and source files larger than 256 KiB are
+ignored while the literal argument remains intact. Skill context is capped at
+1,000 characters, each file at 1,200 characters, and all appended context at
+2,400 characters, with truncation called out in the generated input.
+
+Expanded context is sent to the on-device Foundation engine by default. Codex
+receives only the literal prompt unless
+`HERDR_NAMING_CODEX_EXPANDED_CONTEXT=true` explicitly opts in to sending skill
+and file excerpts externally.
+
 ## What it renames
 
 A prompt about reviewing a cache might rename the pane to `cache-review`. In an
@@ -68,6 +88,7 @@ All settings are optional.
 | `HERDR_NAMING_BRANCH_PREFIX`  | none           | Prefix renamed branches, such as `wyattjoh`  |
 | `HERDR_NAMING_FOUNDATION_BIN` | bundled helper | Override the FoundationModels helper path    |
 | `HERDR_NAMING_CODEX_BIN`      | `codex`        | Override the Codex executable path           |
+| `HERDR_NAMING_CODEX_EXPANDED_CONTEXT` | `false` | Allow expanded skill/file context to be sent to Codex |
 
 To configure a persistent branch prefix:
 
