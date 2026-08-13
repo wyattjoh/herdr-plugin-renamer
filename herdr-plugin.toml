@@ -12,13 +12,11 @@ platforms = ["macos", "linux"]
 [[build]]
 command = ["cargo", "build", "--release"]
 
-# The on-device naming engine: a SwiftPM CLI that calls Apple's FoundationModels.
-# macOS-only: gated so a Linux install never tries to run `swift build`. The
-# Rust binary compiles the Foundation engine out entirely off macOS, so this
-# step is the matching build-time gate. Optional at runtime (the plugin falls
-# back to Codex when it is missing or Apple Intelligence is unavailable).
+# The on-device naming engine is optional. The build script verifies the
+# FoundationModels macros, which require Xcode's toolchain rather than CLT;
+# when unavailable, installation succeeds and runtime falls back to Codex.
 [[build]]
-command = ["swift", "build", "-c", "release", "--package-path", "naming-helper"]
+command = ["sh", "naming-helper/build-if-supported.sh"]
 platforms = ["macos"]
 
 # Fires on EVERY agent status transition. The command bails in microseconds

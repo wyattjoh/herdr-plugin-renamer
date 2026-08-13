@@ -28,8 +28,9 @@ herdr integration install pi
 ## Requirements
 
 - herdr 0.7.4+ on macOS or Linux
-- For on-device naming: macOS 26+ on Apple Silicon with Apple Intelligence
-  enabled
+- For on-device naming: macOS 26+ on Apple Silicon, Apple Intelligence enabled,
+  and the full Xcode toolchain. Command Line Tools omit the FoundationModels
+  guided-generation macro plugin, so installation skips the optional helper.
 - For Codex naming: the `codex` CLI on `PATH` and logged in
 
 Without either naming model, the plugin derives a rough local slug from the

@@ -12,12 +12,13 @@ cargo fmt                      # format (run before committing)
 cargo clippy --all-targets     # lint
 ```
 
-The on-device helper (macOS 26+ only):
+The on-device helper (macOS 26+ only) needs Xcode's Swift toolchain. Command
+Line Tools can import `FoundationModels` but omit its macro plugin, so use the
+same guarded build command as installation:
 
 ```sh
-swift build -c release --package-path naming-helper
-cargo test foundation -- --ignored   # live end-to-end check (needs the helper
-                                      # built and Apple Intelligence available)
+sh naming-helper/build-if-supported.sh
+cargo test foundation -- --ignored   # needs helper + Apple Intelligence
 ```
 
 ### Linux / cross-platform

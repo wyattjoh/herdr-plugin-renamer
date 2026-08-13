@@ -121,7 +121,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   without per-call `@available`; runtime gating uses
   `SystemLanguageModel.default.availability` (`.deviceNotEligible` /
   `.appleIntelligenceNotEnabled` / `.modelNotReady`), reported as a non-zero
-  exit so Rust falls back to Codex.
+  exit so Rust falls back to Codex. `@Generable`/`@Guide` additionally need
+  Xcode's FoundationModels macro plugin; Command Line Tools lack it even when
+  `import FoundationModels` succeeds. `naming-helper/build-if-supported.sh`
+  probes the macros, skips the optional helper when absent, and preserves the
+  Codex/local fallback install path.
 - The model lives behind a shared OS daemon, so the short-lived helper does not
   reload weights per spawn: warm ~0.3s, cold ~1-2s end-to-end. Both beat the
   Codex bar. Use `greedyOptions(maximumResponseTokens:)` for deterministic
