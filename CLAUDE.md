@@ -105,8 +105,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   pane ids. The one-time `state-v2.migrated` migration removes legacy pane-keyed
   state.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
-  integration-tested after `just link` via `herdr plugin log list`. Raw
-  `herdr plugin link` does not run manifest build steps.
+  integration-tested after `just link` via `herdr plugin log list`. The
+  Foundation helper routing has a deterministic shell test at
+  `naming-helper/test-build-if-supported.sh`. Raw `herdr plugin link` does not
+  run manifest build steps.
 
 ## Key facts (verified against herdr 0.7.4, codex-cli 0.142.4, macOS 26.5)
 
@@ -121,11 +123,11 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   without per-call `@available`; runtime gating uses
   `SystemLanguageModel.default.availability` (`.deviceNotEligible` /
   `.appleIntelligenceNotEnabled` / `.modelNotReady`), reported as a non-zero
-  exit so Rust falls back to Codex. `@Generable`/`@Guide` additionally need
-  Xcode's FoundationModels macro plugin; Command Line Tools lack it even when
+  exit so Rust falls back to Codex. `@Generable`/`@Guide` additionally need the
+  FoundationModels macro plugin; current Command Line Tools lack it even when
   `import FoundationModels` succeeds. `naming-helper/build-if-supported.sh`
-  probes the macros, skips the optional helper when absent, and preserves the
-  Codex/local fallback install path.
+  probes the capability, skips the optional helper when absent, and preserves
+  the Codex/local fallback install path.
 - The model lives behind a shared OS daemon, so the short-lived helper does not
   reload weights per spawn: warm ~0.3s, cold ~1-2s end-to-end. Both beat the
   Codex bar. Use `greedyOptions(maximumResponseTokens:)` for deterministic
@@ -189,7 +191,8 @@ just build                 # build local Rust and macOS Swift artifacts
 just link                  # run build, replace the local herdr link
 
 # On-device naming helper (built by the second [[build]] step on install):
-swift build -c release --package-path naming-helper   # -> naming-helper/.build/release/herdr-namer
+sh naming-helper/test-build-if-supported.sh           # capability routing
+sh naming-helper/build-if-supported.sh                # guarded helper build
 ```
 
 ## Agent skills

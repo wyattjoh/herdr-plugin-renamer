@@ -29,8 +29,9 @@ herdr integration install pi
 
 - herdr 0.7.4+ on macOS or Linux
 - For on-device naming: macOS 26+ on Apple Silicon, Apple Intelligence enabled,
-  and the full Xcode toolchain. Command Line Tools omit the FoundationModels
-  guided-generation macro plugin, so installation skips the optional helper.
+  and a Swift toolchain with FoundationModels guided-generation macro support.
+  Current Command Line Tools omit that macro plugin, so installation skips the
+  optional helper.
 - For Codex naming: the `codex` CLI on `PATH` and logged in
 
 Without either naming model, the plugin derives a rough local slug from the

@@ -41,5 +41,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test optional helper routing
+        run: sh naming-helper/test-build-if-supported.sh
       - name: Build optional helper
         run: sh naming-helper/build-if-supported.sh
