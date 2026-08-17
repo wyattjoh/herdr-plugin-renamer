@@ -59,18 +59,11 @@ fn hot_phase() {
         Some(eligible) => eligible,
         None => return,
     };
-    let marker_key = marker_key_for_pane(&eligible.pane_id);
+    let claim_key = marker_key_for_pane(&eligible.pane_id);
 
     let state_dir = state_dir();
-    let done_marker = done_marker_path(&state_dir, &marker_key);
-    if Path::new(&done_marker).exists() {
-        debug_log(&format!(
-            "hot: done marker exists, bail pane={} ws={}",
-            eligible.pane_id, eligible.workspace_id
-        ));
-        return;
-    }
-    let claim_marker = claim_marker_path(&state_dir, &marker_key);
+    migrate_legacy_marker_state(&state_dir);
+    let claim_marker = claim_marker_path(&state_dir, &claim_key);
     if claim_is_fresh(&claim_marker) {
         debug_log(&format!(
             "hot: claim fresh, bail pane={} ws={}",
@@ -89,25 +82,25 @@ fn hot_phase() {
         eligible.workspace_label,
         eligible.is_linked_worktree
     ));
-    spawn_cold_phase(&eligible, &marker_key);
+    spawn_cold_phase(&eligible, &claim_key);
 }
 
 /// The slow path, run detached so herdr is never blocked.
 fn cold_phase() {
     let pane_id = env::var("HN_PANE_ID").unwrap_or_default();
     let workspace_id = env::var("HN_WORKSPACE_ID").unwrap_or_default();
-    let marker_key = env::var("HN_MARKER_KEY").unwrap_or_else(|_| marker_key_for_pane(&pane_id));
+    let claim_key = env::var("HN_MARKER_KEY").unwrap_or_else(|_| marker_key_for_pane(&pane_id));
     let checkout_path = env::var("HN_CHECKOUT_PATH")
         .ok()
         .filter(|path| !path.is_empty());
     let is_linked_worktree = env::var("HN_IS_LINKED_WORKTREE").as_deref() == Ok("true");
     let state_dir = state_dir();
-    let claim_marker = claim_marker_path(&state_dir, &marker_key);
-    let done_marker = done_marker_path(&state_dir, &marker_key);
+    let claim_marker = claim_marker_path(&state_dir, &claim_key);
     debug_log(&format!("cold: start ws={workspace_id} pane={pane_id}"));
 
-    // Resolve the native session (with the timing-race poll), then the prompt.
-    // On a transient miss, drop the claim so a later event retries.
+    // Resolve the native session (with the timing-race poll), then use its
+    // stable identity for durable completion and slug state. Pane ids are
+    // compact display ids and can be reused by unrelated future sessions.
     let (agent, session_id) =
         match herdr::poll_agent_session(&pane_id, SESSION_POLL_ATTEMPTS, SESSION_POLL_DELAY) {
             Some(session) => session,
@@ -117,6 +110,15 @@ fn cold_phase() {
                 return;
             }
         };
+    let session_key = marker_key_for_session(&agent, &session_id);
+    let done_marker = done_marker_path(&state_dir, &session_key);
+    if Path::new(&done_marker).exists() {
+        debug_log(&format!(
+            "cold: session done marker exists, removing claim pane={pane_id} agent={agent}"
+        ));
+        let _ = std::fs::remove_file(&claim_marker);
+        return;
+    }
     debug_log(&format!("cold: session agent={agent} id={session_id}"));
 
     // Poll for the first prompt, not just read once. Claude reports its session
@@ -140,7 +142,7 @@ fn cold_phase() {
 
     // Name it: walk the engine chain (on-device first by default, Codex
     // fallback), then a deterministic local slug if every engine fails.
-    let slug_file = format!("{state_dir}/{marker_key}.slug");
+    let slug_file = format!("{state_dir}/{session_key}.slug");
     let slug = generate_slug(&prompt, Path::new(&slug_file)).unwrap_or_else(|| {
         let slug = slug::fallback_from_prompt(&prompt);
         debug_log(&format!("cold: all engines failed, fallback slug={slug}"));
@@ -190,8 +192,10 @@ fn cold_phase() {
         debug_log("cold: skip branch/workspace rename, not a linked worktree");
     }
 
-    let _ = std::fs::remove_file(&claim_marker);
+    // Publish durable completion before releasing the transient claim so a
+    // status transition cannot open a duplicate-run window between the two.
     let _ = std::fs::write(&done_marker, now_secs().to_string());
+    let _ = std::fs::remove_file(&claim_marker);
 }
 
 /// Walk the engine chain selected by `HERDR_NAMING_ENGINE`, returning the first
@@ -314,7 +318,60 @@ fn marker_key_for_pane(pane_id: &str) -> String {
             }
         })
         .collect::<String>();
-    format!("pane-{safe}")
+    format!("claim-pane-{safe}")
+}
+
+/// Stable, path-safe identity for one native agent session. Herdr pane ids are
+/// compact display ids and can be reused, while the native session reference is
+/// unique for each Claude, Codex, or Pi run.
+fn marker_key_for_session(agent: &str, session_id: &str) -> String {
+    // FNV-1a keeps long Pi transcript paths and opaque session ids out of file
+    // names without adding a hashing dependency. The marker is only a local
+    // idempotency key; a collision would cause a harmless skipped rename.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in agent
+        .bytes()
+        .chain(std::iter::once(0))
+        .chain(session_id.bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let safe_agent = agent
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("session-{safe_agent}-{hash:016x}")
+}
+
+/// Remove pane-id keyed state from releases before session-scoped markers.
+/// Herdr reuses compact pane ids, so legacy `.done` files can suppress an
+/// unrelated future agent session. A sentinel keeps this scan one-time.
+fn migrate_legacy_marker_state(state_dir: &str) {
+    let sentinel = Path::new(state_dir).join("state-v2.migrated");
+    if sentinel.exists() {
+        return;
+    }
+
+    let _ = std::fs::create_dir_all(state_dir);
+    if let Ok(entries) = std::fs::read_dir(state_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let is_legacy_marker = name.starts_with("pane-")
+                && (name.ends_with(".claim") || name.ends_with(".done") || name.ends_with(".slug"));
+            if is_legacy_marker {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let _ = std::fs::write(sentinel, "2");
 }
 
 fn claim_marker_path(state_dir: &str, marker_key: &str) -> String {
@@ -374,7 +431,9 @@ fn debug_log(message: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_branch, marker_key_for_pane};
+    use super::{
+        compose_branch, marker_key_for_pane, marker_key_for_session, migrate_legacy_marker_state,
+    };
 
     #[test]
     fn no_prefix_is_bare_slug() {
@@ -412,6 +471,44 @@ mod tests {
 
     #[test]
     fn marker_key_is_safe_for_pane_ids() {
-        assert_eq!(marker_key_for_pane("w5V:p1"), "pane-w5V_p1");
+        assert_eq!(marker_key_for_pane("w5V:p1"), "claim-pane-w5V_p1");
+    }
+
+    #[test]
+    fn marker_key_tracks_agent_session_instead_of_reused_pane() {
+        let first = marker_key_for_session("pi", "/tmp/session-first.jsonl");
+        let repeated = marker_key_for_session("pi", "/tmp/session-first.jsonl");
+        let replacement = marker_key_for_session("pi", "/tmp/session-second.jsonl");
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, replacement);
+        assert!(first.starts_with("session-pi-"));
+    }
+
+    #[test]
+    fn legacy_pane_markers_are_removed_once_without_touching_session_markers() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-renamer-migration-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pane-w15_p4.done"), "old").unwrap();
+        std::fs::write(dir.join("pane-w15_p4.claim"), "old").unwrap();
+        std::fs::write(dir.join("pane-w15_p4.slug"), "old-task").unwrap();
+        std::fs::write(dir.join("session-pi-abc.done"), "current").unwrap();
+
+        migrate_legacy_marker_state(dir.to_str().unwrap());
+
+        assert!(!dir.join("pane-w15_p4.done").exists());
+        assert!(!dir.join("pane-w15_p4.claim").exists());
+        assert!(!dir.join("pane-w15_p4.slug").exists());
+        assert!(dir.join("session-pi-abc.done").exists());
+        assert!(dir.join("state-v2.migrated").exists());
+
+        std::fs::write(dir.join("pane-current.claim"), "active").unwrap();
+        migrate_legacy_marker_state(dir.to_str().unwrap());
+        assert!(dir.join("pane-current.claim").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
