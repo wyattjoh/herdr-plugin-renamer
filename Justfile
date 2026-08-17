@@ -7,9 +7,8 @@ default:
 build:
     cargo build --release
     if [ "$(uname -s)" = "Darwin" ]; then \
-        swift build -c release --package-path naming-helper; \
+        sh naming-helper/build-if-supported.sh; \
     fi
-
 # Build, then register this checkout with herdr.
 link: build
     herdr plugin unlink {{plugin_id}} >/dev/null 2>&1 || true

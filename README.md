@@ -14,8 +14,11 @@ herdr plugin install wyattjoh/herdr-plugin-renamer
 ```
 
 GitHub installs run the manifest's Rust and platform-specific build steps before
-registering the plugin. Local `herdr plugin link` intentionally does not build;
-use `just link` from a development checkout instead.
+registering the plugin. On macOS, the optional FoundationModels helper is built
+only when the active Swift toolchain supports its guided-generation macros;
+otherwise installation continues with the Codex/local fallbacks. Local
+`herdr plugin link` intentionally does not build; use `just link` from a
+development checkout instead.
 
 Install the herdr integration for each agent you use:
 
@@ -28,8 +31,10 @@ herdr integration install pi
 ## Requirements
 
 - herdr 0.7.4+ on macOS or Linux
-- For on-device naming: macOS 26+ on Apple Silicon with Apple Intelligence
-  enabled
+- For on-device naming: macOS 26+ on Apple Silicon, Apple Intelligence enabled,
+  and a Swift toolchain with FoundationModels guided-generation macro support.
+  Current Command Line Tools omit that macro plugin, so installation skips the
+  optional helper.
 - For Codex naming: the `codex` CLI on `PATH` and logged in
 
 Without either naming model, the plugin derives a rough local slug from the
