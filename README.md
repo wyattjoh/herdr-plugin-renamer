@@ -14,8 +14,11 @@ herdr plugin install wyattjoh/herdr-plugin-renamer
 ```
 
 GitHub installs run the manifest's Rust and platform-specific build steps before
-registering the plugin. Local `herdr plugin link` intentionally does not build;
-use `just link` from a development checkout instead.
+registering the plugin. On macOS, the optional FoundationModels helper is built
+only when the active Swift toolchain supports its guided-generation macros;
+otherwise installation continues with the Codex/local fallbacks. Local
+`herdr plugin link` intentionally does not build; use `just link` from a
+development checkout instead.
 
 Install the herdr integration for each agent you use:
 
