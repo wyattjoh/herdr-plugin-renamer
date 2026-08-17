@@ -51,12 +51,16 @@ chain degrades cleanly: Foundation → Codex → deterministic local slug. Engin
 binaries are overridable via `HERDR_NAMING_FOUNDATION_BIN` and
 `HERDR_NAMING_CODEX_BIN`.
 
-**OS gate:** the `Foundation` engine is `#[cfg(target_os = "macos")]`. Off macOS
-(e.g. Linux) the enum variant, the `foundation` module, and the matching
-`[[build]]` swift step are all compiled/skipped, so the default chain collapses
-to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
-`platforms` are `["macos", "linux"]` (Unix only; the cold phase detaches via
-`setsid`). Verify the Linux build with
+**Platform/capability gate:** the `Foundation` engine is
+`#[cfg(target_os = "macos")]`. Off macOS (e.g. Linux) the enum variant, the
+`foundation` module, and the matching `[[build]]` step are all skipped, so the
+default chain collapses to `[Codex]` and a `foundation` request is silently
+downgraded. On macOS, the install build step runs
+`scripts/build-foundation-helper.sh`: it typechecks a minimal `@Generable` /
+`@Guide` declaration and skips the optional helper when the active toolchain
+lacks those macros. A helper build failure after a successful probe remains
+fatal. The plugin's platforms are `["macos", "linux"]` (Unix only; the cold
+phase detaches via `setsid`). Verify the Linux build with
 `cargo check --target x86_64-unknown-linux-gnu`.
 
 ## Module map
@@ -105,8 +109,10 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   pane ids. The one-time `state-v2.migrated` migration removes legacy pane-keyed
   state.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
-  integration-tested after `just link` via `herdr plugin log list`. Raw
-  `herdr plugin link` does not run manifest build steps.
+  integration-tested after `just link` via `herdr plugin log list`. The
+  Foundation helper install routing has a deterministic shell test at
+  `scripts/test-build-foundation-helper.sh`. Raw `herdr plugin link` does not
+  run manifest build steps.
 
 ## Key facts (verified against herdr 0.7.4, codex-cli 0.142.4, macOS 26.5)
 
@@ -185,6 +191,7 @@ just build                 # build local Rust and macOS Swift artifacts
 just link                  # run build, replace the local herdr link
 
 # On-device naming helper (built by the second [[build]] step on install):
+sh scripts/test-build-foundation-helper.sh            # capability routing
 swift build -c release --package-path naming-helper   # -> naming-helper/.build/release/herdr-namer
 ```
 

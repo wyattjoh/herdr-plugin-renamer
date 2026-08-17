@@ -36,9 +36,10 @@ jobs:
   # The on-device helper links Apple FoundationModels (macOS 26 SDK). While the
   # `macos-latest` label is mid-migration to macOS 26, runners land on either a
   # macOS 26 image (FoundationModels present) or an older one (module absent).
-  # Rather than fail (or go red-but-ignored via continue-on-error), probe for the
-  # SDK: build for real when it is present (a true gate, catching Swift breakage),
-  # and skip cleanly when it is not. The source also sticks to widely-available
+  # Rather than fail (or go red-but-ignored via continue-on-error), probe the
+  # guided-generation macros themselves: a module-only probe can pass under
+  # Command Line Tools even when FoundationModelsMacros is unavailable. Build
+  # for real when supported, and skip cleanly otherwise. The source also sticks to widely-available
   # API labels (`sampling:` over the newer `samplingMode:`) so it compiles
   # wherever the SDK is present.
   swift-helper:
@@ -46,11 +47,24 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Build helper (skips if FoundationModels SDK is absent)
+      - name: Test helper build routing
+        run: sh scripts/test-build-foundation-helper.sh
+      - name: Build helper (skips if guided-generation macros are absent)
         run: |
-          if echo 'import FoundationModels' | swiftc -typecheck - 2>/dev/null; then
-            echo "FoundationModels available; building helper"
+          probe=$(mktemp "${TMPDIR:-/tmp}/herdr-foundation-probe.XXXXXX.swift")
+          trap 'rm -f "$probe"' EXIT
+          cat >"$probe" <<'SWIFT'
+          import FoundationModels
+
+          @Generable
+          struct HerdrFoundationProbe {
+              @Guide(description: "Probe FoundationModels guided-generation macro support")
+              var slug: String
+          }
+          SWIFT
+          if swiftc -typecheck "$probe" 2>/dev/null; then
+            echo "FoundationModels guided-generation macros available; building helper"
             swift build -c release --package-path naming-helper
           else
-            echo "::notice::FoundationModels SDK not on this runner; skipping helper build"
+            echo "::notice::FoundationModels guided-generation macros unavailable; skipping helper build"
           fi

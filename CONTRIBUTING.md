@@ -12,12 +12,13 @@ cargo fmt                      # format (run before committing)
 cargo clippy --all-targets     # lint
 ```
 
-The on-device helper (macOS 26+ only):
+The on-device helper (macOS 26+ with guided-generation macro support):
 
 ```sh
+sh scripts/test-build-foundation-helper.sh  # deterministic capability routing
 swift build -c release --package-path naming-helper
-cargo test foundation -- --ignored   # live end-to-end check (needs the helper
-                                      # built and Apple Intelligence available)
+cargo test foundation -- --ignored          # live end-to-end check (needs the
+                                             # helper and Apple Intelligence)
 ```
 
 ### Linux / cross-platform

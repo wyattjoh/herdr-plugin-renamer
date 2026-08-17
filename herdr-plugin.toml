@@ -13,12 +13,12 @@ platforms = ["macos", "linux"]
 command = ["cargo", "build", "--release"]
 
 # The on-device naming engine: a SwiftPM CLI that calls Apple's FoundationModels.
-# macOS-only: gated so a Linux install never tries to run `swift build`. The
-# Rust binary compiles the Foundation engine out entirely off macOS, so this
-# step is the matching build-time gate. Optional at runtime (the plugin falls
-# back to Codex when it is missing or Apple Intelligence is unavailable).
+# macOS-only: the wrapper builds it when the active toolchain supports guided-
+# generation macros, or skips it so older/Command-Line-Tools-only Macs can
+# install and use the existing Codex/local fallbacks. Once capability is
+# established, a genuine helper build failure still aborts installation.
 [[build]]
-command = ["swift", "build", "-c", "release", "--package-path", "naming-helper"]
+command = ["sh", "scripts/build-foundation-helper.sh"]
 platforms = ["macos"]
 
 # Fires on EVERY agent status transition. The command bails in microseconds
