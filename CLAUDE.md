@@ -87,8 +87,9 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
 ## Conventions
 
 - Fail open: every path exits 0; never block herdr.
-- First-prompt idempotence is pane-scoped: a fresh claim marker blocks duplicate
-  cold phases, and a done marker blocks later events for the same pane.
+- First-prompt idempotence uses a short-lived pane claim to block duplicate cold
+  phases and a session-scoped done marker to block later events for the same
+  native agent session.
 - The cold phase polls for BOTH the session and the first prompt. Claude reports
   its session at SessionStart (before the prompt) and stays `working` with no new
   event, so a single transcript read can miss the prompt and never retry. Polling
@@ -97,11 +98,15 @@ to `[Codex]` and a `foundation` request is silently downgraded. The plugin's
   wrapper (`command-message`/`command-name` plus `command-args`) for naming, but
   never the expanded skill payload (`isMeta:true`) because it is framework text,
   not user intent.
-- Claim marker keyed on pane id in `HERDR_PLUGIN_STATE_DIR`, with a 120s
-  staleness TTL; removed on a transient cold-phase miss so a later event retries.
-  A separate done marker is written after cold-phase completion.
+- A short-lived claim marker is keyed on pane id in `HERDR_PLUGIN_STATE_DIR`,
+  with a 120s staleness TTL; remove it on every transient cold-phase miss so a
+  later event retries. Durable done and cached-slug markers are keyed on a stable
+  hash of the native agent plus session reference because Herdr reuses compact
+  pane ids. The one-time `state-v2.migrated` migration removes legacy pane-keyed
+  state.
 - Pure logic (context/slug/transcript) is unit-tested; IO edges are
-  integration-tested via `herdr plugin link` + `herdr plugin log list`.
+  integration-tested after `just link` via `herdr plugin log list`. Raw
+  `herdr plugin link` does not run manifest build steps.
 
 ## Key facts (verified against herdr 0.7.4, codex-cli 0.142.4, macOS 26.5)
 

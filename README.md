@@ -13,6 +13,10 @@ supported Macs, then Codex, then a deterministic local fallback.
 herdr plugin install wyattjoh/herdr-plugin-renamer
 ```
 
+GitHub installs run the manifest's Rust and platform-specific build steps before
+registering the plugin. Local `herdr plugin link` intentionally does not build;
+use `just link` from a development checkout instead.
+
 Install the herdr integration for each agent you use:
 
 ```sh
@@ -41,6 +45,10 @@ auto-generated linked worktree, the plugin can also rename:
 
 Branch and workspace renaming only happens when the current branch starts with
 `worktree/`. The branch rename is local and never pushes to the remote.
+
+Each native agent session is named once, even when its status changes repeatedly.
+Session identity—not Herdr's reusable compact pane id—owns the completion and
+cached-slug state.
 
 The generated name is also published as pane/workspace metadata:
 
