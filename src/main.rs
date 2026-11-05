@@ -323,7 +323,7 @@ fn marker_key_for_pane(pane_id: &str) -> String {
 
 /// Stable, path-safe identity for one native agent session. Herdr pane ids are
 /// compact display ids and can be reused, while the native session reference is
-/// unique for each Claude, Codex, or Pi run.
+/// unique for each Claude, Codex, Pi, or OMP run.
 fn marker_key_for_session(agent: &str, session_id: &str) -> String {
     // FNV-1a keeps long Pi transcript paths and opaque session ids out of file
     // names without adding a hashing dependency. The marker is only a local
