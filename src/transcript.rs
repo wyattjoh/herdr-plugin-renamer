@@ -1,6 +1,6 @@
-//! Resolving an agent transcript from a native session id or Pi-reported path and extracting the
-//! first genuine user prompt. Supports Claude Code, Codex, and Pi, which use
-//! different on-disk formats.
+//! Resolving an agent transcript from a native session id or a reported path and extracting the
+//! first genuine user prompt. Supports Claude Code, Codex, Pi, and OMP, which use
+//! different on-disk formats (OMP writes Pi's session format).
 
 use std::env;
 use std::path::PathBuf;
@@ -12,14 +12,14 @@ pub fn read_first_prompt(agent: &str, session_id: &str) -> Option<String> {
     first_prompt(agent, &contents)
 }
 
-/// Resolve the agent's `.jsonl` file; Pi reports its path directly.
+/// Resolve the agent's `.jsonl` file; Pi and OMP report their path directly.
 fn resolve_path(agent: &str, session_id: &str) -> Option<PathBuf> {
     let home = env::var("HOME").ok();
     resolve_path_with_home(agent, session_id, home.as_deref())
 }
 
 fn resolve_path_with_home(agent: &str, session_id: &str, home: Option<&str>) -> Option<PathBuf> {
-    if agent == "pi" {
+    if agent == "pi" || (agent == "omp" && session_id.starts_with('/')) {
         return Some(PathBuf::from(session_id));
     }
     let home = home?;
@@ -32,6 +32,13 @@ fn resolve_path_with_home(agent: &str, session_id: &str, home: Option<&str>) -> 
             let base = env::var("CODEX_HOME").unwrap_or_else(|_| format!("{home}/.codex"));
             format!("{base}/sessions/**/rollout-*{session_id}.jsonl")
         }
+        // OMP reports a session id only when it has no session file path yet.
+        // Files are named `<timestamp>_<session id>.jsonl` under a per-cwd dir.
+        "omp" => {
+            let base =
+                env::var("PI_CODING_AGENT_DIR").unwrap_or_else(|_| format!("{home}/.omp/agent"));
+            format!("{base}/sessions/*/*_{session_id}.jsonl")
+        }
         _ => return None,
     };
     glob::glob(&pattern).ok()?.flatten().next()
@@ -42,7 +49,7 @@ pub fn first_prompt(agent: &str, contents: &str) -> Option<String> {
     match agent {
         "claude" => first_prompt_claude(contents),
         "codex" => first_prompt_codex(contents),
-        "pi" => first_prompt_pi(contents),
+        "pi" | "omp" => first_prompt_pi(contents),
         _ => None,
     }
 }
@@ -437,6 +444,50 @@ mod tests {
         assert_eq!(
             first_prompt("pi", jsonl).as_deref(),
             Some("Rename the worktree from my task")
+        );
+    }
+
+    #[test]
+    fn omp_path_does_not_require_home() {
+        assert_eq!(
+            resolve_path_with_home("omp", "/tmp/omp-session.jsonl", None),
+            Some(PathBuf::from("/tmp/omp-session.jsonl"))
+        );
+    }
+
+    #[test]
+    fn omp_session_id_resolves_under_agent_dir() {
+        let dir = env::temp_dir().join(format!("renamer-omp-{}", std::process::id()));
+        let session_dir = dir.join("sessions").join("-Users-me-project");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let file = session_dir.join("2026-11-04T00-22-45-433Z_0193-abc.jsonl");
+        std::fs::write(&file, "").unwrap();
+
+        env::set_var("PI_CODING_AGENT_DIR", &dir);
+        let resolved = resolve_path_with_home("omp", "0193-abc", Some("/nonexistent"));
+        env::remove_var("PI_CODING_AGENT_DIR");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(resolved, Some(file));
+    }
+
+    #[test]
+    fn omp_reads_first_user_text_message() {
+        let jsonl = concat!(
+            r#"{"type":"title","title":"New session"}"#,
+            "\n",
+            r#"{"type":"session","id":"0193-abc","cwd":"/Users/me/project"}"#,
+            "\n",
+            r#"{"type":"model_change","id":"1","model":"anthropic/claude"}"#,
+            "\n",
+            r#"{"type":"custom","customType":"x","data":{}}"#,
+            "\n",
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Add a cache review step"}]}}"#,
+            "\n",
+        );
+        assert_eq!(
+            first_prompt("omp", jsonl).as_deref(),
+            Some("Add a cache review step")
         );
     }
 
